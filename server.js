@@ -1,3 +1,5 @@
+require('dotenv').config(); // ← ADD THIS AT THE VERY TOP
+
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -10,7 +12,7 @@ const { ECPairFactory } = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const TronWeb = require('tronweb');
 const { RippleAPI } = require('ripple-lib');
-const bs58 = require('bs58'); // ← ADDED for Solana Base58 support
+const bs58 = require('bs58');
 const app = express();
 
 const ECPair = ECPairFactory(ecc);
@@ -41,55 +43,67 @@ const ETH_RPC = `https://mainnet.infura.io/v3/${INFURA_KEY}`;
 const orders = {};
 
 // ============================================================
-// 🔥 WALLET CONFIGURATION
+// 🔥 WALLET CONFIGURATION - CHECK ALL KEYS
 // ============================================================
+console.log('🔍 Checking environment variables...');
+
 const WALLETS = {
     BTC: {
-        address: process.env.BTC_ADDRESS,
-        privateKey: process.env.BTC_PRIVATE_KEY,
+        address: process.env.BTC_ADDRESS || '',
+        privateKey: process.env.BTC_PRIVATE_KEY || '',
         network: 'bitcoin'
     },
     ETH: {
-        address: process.env.ETH_ADDRESS,
-        privateKey: process.env.ETH_PRIVATE_KEY,
+        address: process.env.ETH_ADDRESS || '',
+        privateKey: process.env.ETH_PRIVATE_KEY || '',
         network: 'ethereum'
     },
     BNB: {
-        address: process.env.BNB_ADDRESS,
-        privateKey: process.env.BNB_PRIVATE_KEY,
+        address: process.env.BNB_ADDRESS || '',
+        privateKey: process.env.BNB_PRIVATE_KEY || '',
         network: 'bsc'
     },
     SOL: {
-        address: process.env.SOL_ADDRESS,
-        privateKey: process.env.SOL_PRIVATE_KEY,
+        address: process.env.SOL_ADDRESS || '',
+        privateKey: process.env.SOL_PRIVATE_KEY || '',
         network: 'solana'
     },
     TRX: {
-        address: process.env.TRX_ADDRESS,
-        privateKey: process.env.TRX_PRIVATE_KEY,
+        address: process.env.TRX_ADDRESS || '',
+        privateKey: process.env.TRX_PRIVATE_KEY || '',
         network: 'tron'
     },
     XRP: {
-        address: process.env.XRP_ADDRESS,
-        privateKey: process.env.XRP_PRIVATE_KEY,
+        address: process.env.XRP_ADDRESS || '',
+        privateKey: process.env.XRP_PRIVATE_KEY || '',
         network: 'ripple'
     },
     LTC: {
-        address: process.env.LTC_ADDRESS,
-        privateKey: process.env.LTC_PRIVATE_KEY,
+        address: process.env.LTC_ADDRESS || '',
+        privateKey: process.env.LTC_PRIVATE_KEY || '',
         network: 'litecoin'
     },
     AVAX: {
-        address: process.env.AVAX_ADDRESS,
-        privateKey: process.env.AVAX_PRIVATE_KEY,
+        address: process.env.AVAX_ADDRESS || '',
+        privateKey: process.env.AVAX_PRIVATE_KEY || '',
         network: 'avalanche'
     },
     LINK: {
-        address: process.env.LINK_ADDRESS,
-        privateKey: process.env.LINK_PRIVATE_KEY || process.env.ETH_PRIVATE_KEY,
+        address: process.env.LINK_ADDRESS || '',
+        privateKey: process.env.LINK_PRIVATE_KEY || process.env.ETH_PRIVATE_KEY || '',
         network: 'ethereum'
     }
 };
+
+// Log which wallets are configured
+Object.keys(WALLETS).forEach(coin => {
+    const wallet = WALLETS[coin];
+    if (wallet.privateKey) {
+        console.log(`✅ ${coin} wallet configured`);
+    } else {
+        console.log(`⚠️ ${coin} wallet NOT configured (missing private key)`);
+    }
+});
 
 // ============================================================
 // 🔥 COIN TO WALLET MAPPING
@@ -120,14 +134,30 @@ const COIN_TO_WALLET = {
 // 📌 GET WALLET FOR COIN
 // ============================================================
 function getWalletForCoin(coinSymbol, network) {
+    let walletKey;
+    
     if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
-        const walletKey = COIN_TO_WALLET[coinSymbol][network];
-        if (!walletKey) throw new Error(`No wallet for ${coinSymbol} on ${network}`);
-        return WALLETS[walletKey];
+        if (!network) {
+            // Default to ERC20 if no network specified
+            network = 'ERC20';
+        }
+        walletKey = COIN_TO_WALLET[coinSymbol][network];
+        if (!walletKey) {
+            throw new Error(`No wallet for ${coinSymbol} on network ${network}. Available: ${Object.keys(COIN_TO_WALLET[coinSymbol]).join(', ')}`);
+        }
+    } else {
+        walletKey = COIN_TO_WALLET[coinSymbol];
+        if (!walletKey) {
+            throw new Error(`No wallet mapping for ${coinSymbol}`);
+        }
     }
-    const walletKey = COIN_TO_WALLET[coinSymbol];
-    if (!walletKey) throw new Error(`No wallet for ${coinSymbol}`);
-    return WALLETS[walletKey];
+    
+    const wallet = WALLETS[walletKey];
+    if (!wallet || !wallet.privateKey) {
+        throw new Error(`Private key not configured for ${coinSymbol} (wallet: ${walletKey}). Please check your .env file.`);
+    }
+    
+    return wallet;
 }
 
 // ============================================================
@@ -201,6 +231,11 @@ async function getWalletBalance(coinSymbol, network) {
     try {
         const wallet = getWalletForCoin(coinSymbol, network);
         const address = wallet.address;
+        
+        if (!address) {
+            console.log(`⚠️ No address configured for ${coinSymbol}`);
+            return 0;
+        }
         
         if (coinSymbol === 'BTC') {
             const response = await axios.get(`https://blockchain.info/q/addressbalance/${address}`);
@@ -336,11 +371,9 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         
         // Parse BTC private key (WIF format)
         let privateKeyWIF = privateKeyInput;
-        // If it's a parsed Uint8Array, convert to hex
         if (privateKeyInput instanceof Uint8Array) {
             privateKeyWIF = Buffer.from(privateKeyInput).toString('hex');
         }
-        // If it's a Buffer, convert to hex
         if (Buffer.isBuffer(privateKeyInput)) {
             privateKeyWIF = privateKeyInput.toString('hex');
         }
@@ -395,18 +428,15 @@ async function sendETH(privateKeyInput, toAddress, amountETH) {
     try {
         const provider = new ethers.JsonRpcProvider(ETH_RPC);
         
-        // Parse private key
         let privateKey = privateKeyInput;
         if (privateKeyInput instanceof Uint8Array) {
             privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
         } else if (Buffer.isBuffer(privateKeyInput)) {
             privateKey = '0x' + privateKeyInput.toString('hex');
         } else if (typeof privateKeyInput === 'string') {
-            // If it's hex without 0x, add it
             if (!privateKeyInput.startsWith('0x') && /^[0-9a-f]{64}$/i.test(privateKeyInput)) {
                 privateKey = '0x' + privateKeyInput;
             }
-            // If it's base58 or other format, try to decode
             if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
                 try {
                     const decoded = bs58.decode(privateKeyInput);
@@ -442,7 +472,6 @@ async function sendERC20(privateKeyInput, toAddress, amount, contractAddress, de
     try {
         const provider = new ethers.JsonRpcProvider(ETH_RPC);
         
-        // Parse private key
         let privateKey = privateKeyInput;
         if (privateKeyInput instanceof Uint8Array) {
             privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
@@ -489,12 +518,9 @@ async function sendSOL(privateKeyInput, toAddress, amountSOL) {
         
         const connection = new Connection(SOLANA_RPC);
         
-        // Parse private key from any format
         let secretKey = parsePrivateKey(privateKeyInput, 'SOL');
         
-        // If it's a string (WIF or raw), try to decode
         if (typeof secretKey === 'string') {
-            // Try base58
             try {
                 const decoded = bs58.decode(secretKey);
                 if (decoded.length === 64) {
@@ -503,7 +529,6 @@ async function sendSOL(privateKeyInput, toAddress, amountSOL) {
                 }
             } catch (e) { /* Not base58 */ }
             
-            // Try base64
             if (typeof secretKey === 'string') {
                 try {
                     const buffer = Buffer.from(secretKey, 'base64');
@@ -514,7 +539,6 @@ async function sendSOL(privateKeyInput, toAddress, amountSOL) {
                 } catch (e) { /* Not base64 */ }
             }
             
-            // Try hex
             if (typeof secretKey === 'string') {
                 try {
                     const hexClean = secretKey.replace('0x', '').trim();
@@ -526,7 +550,6 @@ async function sendSOL(privateKeyInput, toAddress, amountSOL) {
             }
         }
         
-        // If still a string, try JSON array
         if (typeof secretKey === 'string') {
             try {
                 const array = JSON.parse(secretKey);
@@ -573,7 +596,6 @@ async function sendUSDCOnSolana(privateKeyInput, toAddress, amountUSDC) {
     try {
         const connection = new Connection(SOLANA_RPC);
         
-        // Parse private key from any format
         let secretKey = parsePrivateKey(privateKeyInput, 'USDC-SOL');
         
         if (typeof secretKey === 'string') {
