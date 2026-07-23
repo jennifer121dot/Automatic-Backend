@@ -238,11 +238,15 @@ async function getWalletBalance(coinSymbol, network) {
             try {
                 // Try mempool.space first
                 const response = await axios.get(`https://mempool.space/api/address/${address}`);
-                return response.data.chain_stats.funded_txo_sum / 100000000;
+                const balance = response.data.chain_stats.funded_txo_sum / 100000000;
+                console.log(`💰 BTC Balance: ${balance} BTC`);
+                return balance;
             } catch {
                 // Fallback to blockchain.info
                 const response = await axios.get(`https://blockchain.info/q/addressbalance/${address}`);
-                return response.data / 100000000;
+                const balance = response.data / 100000000;
+                console.log(`💰 BTC Balance: ${balance} BTC`);
+                return balance;
             }
         }
         
@@ -350,7 +354,7 @@ async function getWalletBalance(coinSymbol, network) {
 // ============================================================
 
 // ============================================================
-// 📌 SEND BTC (REAL) - USING MEMPOOL.SPACE (MORE RELIABLE)
+// 📌 SEND BTC (REAL) - IMPROVED WITH DYNAMIC FEES
 // ============================================================
 async function sendBTC(privateKeyInput, toAddress, amountBTC) {
     try {
@@ -374,23 +378,44 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         }
         
         if (!utxos || utxos.length === 0) {
-            throw new Error('No UTXOs found for this address');
+            throw new Error('No UTXOs found for this address. Please fund your BTC wallet.');
         }
         
         const satoshisNeeded = Math.round(amountBTC * 100000000);
+        
+        // Calculate total available
+        const totalAvailable = utxos.reduce((sum, utxo) => sum + utxo.value, 0);
+        console.log(`💰 Total available: ${totalAvailable} sats (${(totalAvailable/100000000).toFixed(8)} BTC)`);
+        console.log(`💰 Needed: ${satoshisNeeded} sats (${amountBTC} BTC)`);
+        
+        // Estimate fee (dynamic based on UTXO count)
+        const estimatedFee = Math.min(25000, Math.round(utxos.length * 2500 + 5000));
+        console.log(`💰 Estimated fee: ${estimatedFee} sats`);
+        
+        const totalNeeded = satoshisNeeded + estimatedFee;
+        
+        if (totalAvailable < totalNeeded) {
+            const shortage = totalNeeded - totalAvailable;
+            throw new Error(
+                `Insufficient funds! Have ${totalAvailable} sats (${(totalAvailable/100000000).toFixed(8)} BTC), ` +
+                `Need ${totalNeeded} sats (${(totalNeeded/100000000).toFixed(8)} BTC) including fee. ` +
+                `Shortage: ${shortage} sats (${(shortage/100000000).toFixed(8)} BTC). ` +
+                `Please fund your wallet or try a smaller amount.`
+            );
+        }
+        
+        // Select UTXOs
         let selectedUTXOs = [];
         let totalSats = 0;
         
         for (const utxo of utxos) {
-            if (totalSats < satoshisNeeded + 15000) {
+            if (totalSats < totalNeeded) {
                 selectedUTXOs.push(utxo);
                 totalSats += utxo.value;
             }
         }
         
-        if (totalSats < satoshisNeeded + 15000) {
-            throw new Error(`Insufficient UTXOs: Need ${satoshisNeeded + 15000} sats, have ${totalSats} sats`);
-        }
+        console.log(`✅ Selected ${selectedUTXOs.length} UTXOs, total: ${totalSats} sats`);
         
         let privateKeyWIF = privateKeyInput;
         if (privateKeyInput instanceof Uint8Array) {
@@ -406,11 +431,9 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         for (const utxo of selectedUTXOs) {
             let rawTx;
             try {
-                // Try mempool.space first
                 const response = await axios.get(`https://mempool.space/api/tx/${utxo.txid}/hex`);
                 rawTx = response.data;
             } catch (error) {
-                // Fallback to blockchain.info
                 console.log('⚠️ Mempool.space tx fetch failed, trying blockchain.info...');
                 const response = await axios.get(`https://blockchain.info/rawtx/${utxo.txid}`);
                 rawTx = response.data;
@@ -432,14 +455,21 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
             value: satoshisNeeded
         });
         
-        const fee = Math.min(15000, totalSats - satoshisNeeded);
+        // Calculate actual fee and change
+        const fee = Math.min(estimatedFee, totalSats - satoshisNeeded - 1000);
         const change = totalSats - satoshisNeeded - fee;
+        
         if (change > 1000) {
             psbt.addOutput({
                 address: wallet.address,
                 value: change
             });
+            console.log(`💰 Change: ${change} sats sent back to wallet`);
+        } else {
+            console.log(`💰 No significant change (${change} sats)`);
         }
+        
+        console.log(`💰 Actual fee: ${fee} sats`);
         
         for (let i = 0; i < selectedUTXOs.length; i++) {
             psbt.signInput(i, keyPair);
@@ -458,6 +488,7 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
             broadcastResponse = await axios.post('https://blockchain.info/pushtx', `tx=${txHex}`);
         }
         
+        console.log(`✅ BTC Transaction broadcasted: ${broadcastResponse.data}`);
         return broadcastResponse.data;
     } catch (error) {
         console.error('❌ BTC send error:', error.message);
