@@ -235,8 +235,15 @@ async function getWalletBalance(coinSymbol, network) {
         }
         
         if (coinSymbol === 'BTC') {
-            const response = await axios.get(`https://blockchain.info/q/addressbalance/${address}`);
-            return response.data / 100000000;
+            try {
+                // Try mempool.space first
+                const response = await axios.get(`https://mempool.space/api/address/${address}`);
+                return response.data.chain_stats.funded_txo_sum / 100000000;
+            } catch {
+                // Fallback to blockchain.info
+                const response = await axios.get(`https://blockchain.info/q/addressbalance/${address}`);
+                return response.data / 100000000;
+            }
         }
         
         if (coinSymbol === 'LTC') {
@@ -343,27 +350,46 @@ async function getWalletBalance(coinSymbol, network) {
 // ============================================================
 
 // ============================================================
-// 📌 SEND BTC (REAL) - ACCEPTS WIF
+// 📌 SEND BTC (REAL) - USING MEMPOOL.SPACE (MORE RELIABLE)
 // ============================================================
 async function sendBTC(privateKeyInput, toAddress, amountBTC) {
     try {
         const wallet = getWalletForCoin('BTC');
-        const utxoResponse = await axios.get(`https://api.blockchair.com/bitcoin/dashboards/address/${wallet.address}?transaction_details=true`);
-        const utxos = utxoResponse.data.data[wallet.address].utxo || [];
+        console.log(`📤 Sending ${amountBTC} BTC from ${wallet.address} to ${toAddress}`);
+        
+        // Get UTXOs from mempool.space
+        let utxos;
+        try {
+            const response = await axios.get(`https://mempool.space/api/address/${wallet.address}/utxo`);
+            utxos = response.data || [];
+        } catch (error) {
+            console.log('⚠️ Mempool.space failed, trying blockchain.info...');
+            const response = await axios.get(`https://blockchain.info/unspent?active=${wallet.address}`);
+            utxos = response.data.unspent_outputs.map(utxo => ({
+                txid: utxo.tx_hash,
+                vout: utxo.tx_output_n,
+                value: utxo.value,
+                scriptpubkey: utxo.script
+            }));
+        }
+        
+        if (!utxos || utxos.length === 0) {
+            throw new Error('No UTXOs found for this address');
+        }
         
         const satoshisNeeded = Math.round(amountBTC * 100000000);
         let selectedUTXOs = [];
         let totalSats = 0;
         
         for (const utxo of utxos) {
-            if (totalSats < satoshisNeeded + 10000) {
+            if (totalSats < satoshisNeeded + 15000) {
                 selectedUTXOs.push(utxo);
                 totalSats += utxo.value;
             }
         }
         
-        if (totalSats < satoshisNeeded + 10000) {
-            throw new Error('Insufficient UTXOs to cover amount + fee');
+        if (totalSats < satoshisNeeded + 15000) {
+            throw new Error(`Insufficient UTXOs: Need ${satoshisNeeded + 15000} sats, have ${totalSats} sats`);
         }
         
         let privateKeyWIF = privateKeyInput;
@@ -378,11 +404,24 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         const psbt = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin });
         
         for (const utxo of selectedUTXOs) {
+            let rawTx;
+            try {
+                // Try mempool.space first
+                const response = await axios.get(`https://mempool.space/api/tx/${utxo.txid}/hex`);
+                rawTx = response.data;
+            } catch (error) {
+                // Fallback to blockchain.info
+                console.log('⚠️ Mempool.space tx fetch failed, trying blockchain.info...');
+                const response = await axios.get(`https://blockchain.info/rawtx/${utxo.txid}`);
+                rawTx = response.data;
+            }
+            
             psbt.addInput({
-                hash: utxo.transaction_hash,
-                index: utxo.index,
+                hash: utxo.txid,
+                index: utxo.vout,
+                nonWitnessUtxo: Buffer.from(rawTx, 'hex'),
                 witnessUtxo: {
-                    script: Buffer.from(utxo.script_hex, 'hex'),
+                    script: Buffer.from(utxo.scriptpubkey || utxo.script, 'hex'),
                     value: utxo.value
                 }
             });
@@ -393,8 +432,9 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
             value: satoshisNeeded
         });
         
-        const change = totalSats - satoshisNeeded - 10000;
-        if (change > 0) {
+        const fee = Math.min(15000, totalSats - satoshisNeeded);
+        const change = totalSats - satoshisNeeded - fee;
+        if (change > 1000) {
             psbt.addOutput({
                 address: wallet.address,
                 value: change
@@ -409,10 +449,22 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         const tx = psbt.extractTransaction();
         const txHex = tx.toHex();
         
-        const broadcastResponse = await axios.post('https://blockchain.info/pushtx', `tx=${txHex}`);
+        // Broadcast using mempool.space
+        let broadcastResponse;
+        try {
+            broadcastResponse = await axios.post('https://mempool.space/api/tx', txHex);
+        } catch (error) {
+            console.log('⚠️ Mempool.space broadcast failed, trying blockchain.info...');
+            broadcastResponse = await axios.post('https://blockchain.info/pushtx', `tx=${txHex}`);
+        }
+        
         return broadcastResponse.data;
     } catch (error) {
         console.error('❌ BTC send error:', error.message);
+        if (error.response) {
+            console.error('Response data:', error.response.data);
+            console.error('Response status:', error.response.status);
+        }
         throw error;
     }
 }
@@ -957,7 +1009,7 @@ async function sendCryptoFromWallet(coinSymbol, toAddress, amount, network) {
     try {
         if (coinSymbol === 'BTC') {
             txId = await sendBTC(wallet.privateKey, toAddress, amount);
-            explorerUrl = `https://blockstream.info/tx/${txId}`;
+            explorerUrl = `https://mempool.space/tx/${txId}`;
         }
         else if (coinSymbol === 'ETH') {
             txId = await sendETH(wallet.privateKey, toAddress, amount);
