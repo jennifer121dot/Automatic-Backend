@@ -1,5 +1,3 @@
-require('dotenv').config(); // ← ADD THIS AT THE VERY TOP
-
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -138,7 +136,6 @@ function getWalletForCoin(coinSymbol, network) {
     
     if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
         if (!network) {
-            // Default to ERC20 if no network specified
             network = 'ERC20';
         }
         walletKey = COIN_TO_WALLET[coinSymbol][network];
@@ -154,7 +151,7 @@ function getWalletForCoin(coinSymbol, network) {
     
     const wallet = WALLETS[walletKey];
     if (!wallet || !wallet.privateKey) {
-        throw new Error(`Private key not configured for ${coinSymbol} (wallet: ${walletKey}). Please check your .env file.`);
+        throw new Error(`Private key not configured for ${coinSymbol} (wallet: ${walletKey}). Please check your environment variables.`);
     }
     
     return wallet;
@@ -369,7 +366,6 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
             throw new Error('Insufficient UTXOs to cover amount + fee');
         }
         
-        // Parse BTC private key (WIF format)
         let privateKeyWIF = privateKeyInput;
         if (privateKeyInput instanceof Uint8Array) {
             privateKeyWIF = Buffer.from(privateKeyInput).toString('hex');
