@@ -35,7 +35,7 @@ const TRON_RPC = 'https://api.trongrid.io';
 const ETH_RPC = `https://mainnet.infura.io/v3/${INFURA_KEY}`;
 
 // ============================================================
-// 🔥 TELEGRAM BOT - FROM ENVIRONMENT VARIABLES (NO HARDCODING!)
+// 🔥 TELEGRAM BOT - FROM ENVIRONMENT VARIABLES
 // ============================================================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
@@ -43,6 +43,8 @@ const CHAT_ID = process.env.CHAT_ID;
 // Check if Telegram variables are set
 if (!BOT_TOKEN || !CHAT_ID) {
 console.warn('⚠️ BOT_TOKEN and CHAT_ID not set in environment variables. Telegram features will be disabled.');
+} else {
+console.log('✅ Telegram bot configured');
 }
 
 // ============================================================
@@ -159,64 +161,47 @@ let lastPriceCheck = {};
 // 🧠 SMART FUNCTIONS - WORKS FOR ALL COINS
 // ============================================================
 
-// Get current price for any coin
+// Get current price for any coin - WITH RATE LIMIT PROTECTION
 async function getPrice(coinSymbol) {
 try {
-// For stablecoins
+// For stablecoins - no API call needed
 if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
 return 1.00;
 }
 
-// For SOL
-if (coinSymbol === 'SOL') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
-return response.data.solana.usd;
-}
+// Add delay to avoid rate limiting (500ms between requests)
+await new Promise(resolve => setTimeout(resolve, 500));
 
-// For BTC
-if (coinSymbol === 'BTC') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
-return response.data.bitcoin.usd;
-}
+// Map coin symbols to CoinGecko IDs
+const coinMap = {
+'BTC': 'bitcoin',
+'ETH': 'ethereum',
+'BNB': 'binancecoin',
+'SOL': 'solana',
+'XRP': 'ripple',
+'LTC': 'litecoin',
+'AVAX': 'avalanche-2',
+'LINK': 'chainlink'
+};
 
-// For ETH
-if (coinSymbol === 'ETH') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
-return response.data.ethereum.usd;
-}
+const id = coinMap[coinSymbol];
+if (!id) return 0;
 
-// For BNB
-if (coinSymbol === 'BNB') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd');
-return response.data.binancecoin.usd;
-}
+const response = await axios.get(
+`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`,
+{ timeout: 10000 }
+);
 
-// For XRP
-if (coinSymbol === 'XRP') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd');
-return response.data.ripple.usd;
-}
+return response.data[id]?.usd || 0;
 
-// For LTC
-if (coinSymbol === 'LTC') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd');
-return response.data.litecoin.usd;
-}
-
-// For AVAX
-if (coinSymbol === 'AVAX') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=avalanche-2&vs_currencies=usd');
-return response.data['avalanche-2'].usd;
-}
-
-// For LINK
-if (coinSymbol === 'LINK') {
-const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=chainlink&vs_currencies=usd');
-return response.data.chainlink.usd;
-}
-
-return 0;
 } catch (error) {
+if (error.response?.status === 429) {
+console.log(`⏳ Rate limited for ${coinSymbol}, using cached price`);
+// Return cached price if available
+if (priceCache[coinSymbol]) {
+return priceCache[coinSymbol];
+}
+}
 console.error(`❌ Error getting price for ${coinSymbol}:`, error.message);
 return 0;
 }
@@ -227,7 +212,12 @@ async function getWalletBalanceUSD(coinSymbol) {
 try {
 const balance = await getWalletBalance(coinSymbol);
 const price = await getPrice(coinSymbol);
-return balance * price;
+const usdValue = balance * price;
+// Cache the price
+if (price > 0) {
+priceCache[coinSymbol] = price;
+}
+return usdValue;
 } catch (error) {
 console.error(`❌ Error getting balance USD for ${coinSymbol}:`, error.message);
 return 0;
@@ -411,7 +401,7 @@ inline_keyboard: [
 };
 
 try {
-await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
 method: 'POST',
 headers: { 'Content-Type': 'application/json' },
 body: JSON.stringify({
@@ -421,6 +411,11 @@ parse_mode: 'Markdown',
 reply_markup: keyboard
 })
 });
+
+if (!response.ok) {
+const errorText = await response.text();
+console.error(`❌ Telegram API error: ${response.status} - ${errorText}`);
+}
 } catch (error) {
 console.error('❌ Failed to send pause control:', error.message);
 }
@@ -449,15 +444,17 @@ console.error('❌ Failed to send alert:', error.message);
 }
 }
 
-// Telegram webhook endpoint
+// ============================================================
+// 📌 TELEGRAM WEBHOOK - FIXED
+// ============================================================
 app.post('/api/telegram-webhook', async (req, res) => {
 // Always respond with 200 OK to Telegram immediately
 res.status(200).send('OK');
 
-// Process the update in the background (don't wait)
+// Process the update in the background
 try {
 const update = req.body;
-console.log('📥 Telegram webhook received:', JSON.stringify(update, null, 2));
+console.log('📥 Telegram webhook received');
 
 // Handle callback queries (button clicks)
 if (update.callback_query) {
@@ -487,7 +484,6 @@ PAUSE_REASON = 'Emergency pause via Telegram';
 responseText = '⏸️ SYSTEM PAUSED! All orders stopped.';
 showAlert = true;
 console.log('🚨 Emergency pause activated via Telegram');
-// Send separate notification
 await sendTelegramAlert('🚨 *EMERGENCY PAUSE ACTIVATED*\n\nAll orders have been stopped.');
 }
 } else if (callbackData === 'resume_orders') {
@@ -511,7 +507,7 @@ try {
 const balance = await getWalletBalance(coin);
 const price = await getPrice(coin);
 const balanceUSD = balance * price;
-walletInfo += `• ${coin}: ${balance.toFixed(4)} ($${balanceUSD.toFixed(2)})\n`;
+walletInfo += `• ${coin}: ${balance.toFixed(6)} ($${balanceUSD.toFixed(2)})\n`;
 } catch (error) {
 walletInfo += `• ${coin}: ⚠️ Error fetching\n`;
 }
@@ -520,9 +516,12 @@ walletInfo += `\n📅 ${new Date().toLocaleString()}`;
 responseText = walletInfo;
 }
 
-// Answer the callback query
+// Answer the callback query - FIXED: Only use BOT_TOKEN if available
 try {
-await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+const answerUrl = `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`;
+console.log(`📤 Answering callback with token: ${BOT_TOKEN ? 'present' : 'MISSING!'}`);
+
+const answerResponse = await fetch(answerUrl, {
 method: 'POST',
 headers: { 'Content-Type': 'application/json' },
 body: JSON.stringify({
@@ -531,6 +530,13 @@ text: responseText.replace(/\*/g, '').substring(0, 200),
 show_alert: showAlert
 })
 });
+
+if (!answerResponse.ok) {
+const errorText = await answerResponse.text();
+console.error(`❌ Failed to answer callback: ${answerResponse.status} - ${errorText}`);
+} else {
+console.log('✅ Callback answered successfully');
+}
 } catch (error) {
 console.error('❌ Failed to answer callback:', error.message);
 }
@@ -567,7 +573,7 @@ console.log('🔄 Running smart system check for ALL coins...');
 
 for (const coin of SUPPORTED_COINS) {
 try {
-// Update price cache
+// Update price cache with delay to avoid rate limits
 const price = await getPrice(coin);
 if (!yesterdayPrices[coin]) {
 yesterdayPrices[coin] = price;
