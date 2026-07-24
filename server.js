@@ -94,7 +94,7 @@ const COIN_TO_WALLET = {
 };
 
 // ============================================================
-// 🛡️ SMART SYSTEM - FIXED 429 ERRORS WITH BETTER CACHING
+// 🛡️ SMART SYSTEM
 // ============================================================
 
 const priceCache = {};
@@ -104,9 +104,19 @@ let PAUSE_REASON = '';
 const SUPPORTED_COINS = ['BTC', 'ETH', 'BNB', 'SOL', 'USDC', 'USDT', 'XRP', 'LTC', 'AVAX', 'LINK'];
 const dailyVolumes = {};
 
+function trackVolume(coinSymbol, amount) {
+if (!dailyVolumes[coinSymbol]) {
+dailyVolumes[coinSymbol] = 0;
+}
+dailyVolumes[coinSymbol] += amount;
+}
+
 // ============================================================
-// 🔥 FIXED: BATCH PRICE FETCHING - NO MORE 429 ERRORS!
+// 🔥 PRICE SYSTEM - WITH CACHING (NO 429 ERRORS)
 // ============================================================
+let cachedPrices = null;
+let lastPriceFetch = 0;
+
 async function getAllPrices() {
 try {
 const response = await axios.get(
@@ -119,10 +129,6 @@ console.error('❌ Error fetching prices:', error.message);
 return null;
 }
 }
-
-// Cached prices with 5-minute expiry
-let cachedPrices = null;
-let lastPriceFetch = 0;
 
 async function getPrice(coinSymbol) {
 try {
@@ -158,11 +164,7 @@ return prices[id].usd;
 }
 }
 
-if (priceCache[coinSymbol]) {
-return priceCache[coinSymbol];
-}
-
-return 0;
+return priceCache[coinSymbol] || 0;
 } catch (error) {
 console.error(`❌ Error getting price for ${coinSymbol}:`, error.message);
 return priceCache[coinSymbol] || 0;
@@ -170,83 +172,77 @@ return priceCache[coinSymbol] || 0;
 }
 
 // ============================================================
-// 🔥 AUTO-BUFFER SYSTEM (20% → 15% → 10% → 7% → 5%)
+// 🔥 SMART BUFFER SYSTEM
 // ============================================================
 async function getSmartBuffer(coinSymbol) {
 const balanceUSD = await getWalletBalanceUSD(coinSymbol);
 
 if (balanceUSD < 10) return 0.20;
-
 if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
 if (balanceUSD < 500) return 0.08;
 if (balanceUSD < 2000) return 0.05;
 if (balanceUSD < 10000) return 0.03;
 return 0.02;
 }
-
 if (coinSymbol === 'BTC' || coinSymbol === 'ETH') {
 if (balanceUSD < 500) return 0.18;
 if (balanceUSD < 2000) return 0.15;
 if (balanceUSD < 10000) return 0.12;
 return 0.08;
 }
-
 if (balanceUSD < 500) return 0.15;
 if (balanceUSD < 2000) return 0.10;
 if (balanceUSD < 10000) return 0.07;
 return 0.05;
 }
 
-// ============================================================
-// 🔥 SMART SELL LIMITS
-// ============================================================
 async function getSmartSellLimits(coinSymbol) {
 const balanceUSD = await getWalletBalanceUSD(coinSymbol);
-
 if (balanceUSD < 10) return { perTx: 5, perDay: 10, perWeek: 50 };
-
 if (balanceUSD < 500) return { perTx: 10, perDay: 20, perWeek: 100 };
 if (balanceUSD < 2000) return { perTx: 25, perDay: 50, perWeek: 250 };
 if (balanceUSD < 10000) return { perTx: 50, perDay: 100, perWeek: 500 };
 return { perTx: 200, perDay: 500, perWeek: 2000 };
 }
 
-// ============================================================
-// 🔥 SMART STOP LOSS
-// ============================================================
 async function getSmartStopLoss(coinSymbol) {
 const balanceUSD = await getWalletBalanceUSD(coinSymbol);
-
 if (balanceUSD < 10) return 0.05;
-
 if (coinSymbol === 'BTC' || coinSymbol === 'ETH') {
 if (balanceUSD < 500) return 0.06;
 if (balanceUSD < 2000) return 0.08;
 if (balanceUSD < 10000) return 0.10;
 return 0.15;
 }
-
-if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
-return 999;
-}
-
+if (coinSymbol === 'USDC' || coinSymbol === 'USDT') return 999;
 if (balanceUSD < 500) return 0.08;
 if (balanceUSD < 2000) return 0.10;
 if (balanceUSD < 10000) return 0.15;
 return 0.20;
 }
 
-// ============================================================
-// 🔥 WALLET BALANCE USD
-// ============================================================
+async function getSmartMinBalance(coinSymbol) {
+const balanceUSD = await getWalletBalanceUSD(coinSymbol);
+const dailyVolume = dailyVolumes[coinSymbol] || 0;
+if (balanceUSD < 10) return dailyVolume * 5;
+if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
+if (balanceUSD < 500) return dailyVolume * 2;
+if (balanceUSD < 2000) return dailyVolume * 1.5;
+if (balanceUSD < 10000) return dailyVolume * 1;
+return dailyVolume * 0.5;
+}
+if (balanceUSD < 500) return dailyVolume * 3;
+if (balanceUSD < 2000) return dailyVolume * 2.5;
+if (balanceUSD < 10000) return dailyVolume * 2;
+return dailyVolume * 1.5;
+}
+
 async function getWalletBalanceUSD(coinSymbol) {
 try {
 const balance = await getWalletBalance(coinSymbol);
 const price = await getPrice(coinSymbol);
 const usdValue = balance * price;
-if (price > 0) {
-priceCache[coinSymbol] = price;
-}
+if (price > 0) priceCache[coinSymbol] = price;
 return usdValue;
 } catch (error) {
 console.error(`❌ Error getting balance USD for ${coinSymbol}:`, error.message);
@@ -254,31 +250,6 @@ return 0;
 }
 }
 
-// ============================================================
-// 🔥 SMART MIN BALANCE
-// ============================================================
-async function getSmartMinBalance(coinSymbol) {
-const balanceUSD = await getWalletBalanceUSD(coinSymbol);
-const dailyVolume = dailyVolumes[coinSymbol] || 0;
-
-if (balanceUSD < 10) return dailyVolume * 5;
-
-if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
-if (balanceUSD < 500) return dailyVolume * 2;
-if (balanceUSD < 2000) return dailyVolume * 1.5;
-if (balanceUSD < 10000) return dailyVolume * 1;
-return dailyVolume * 0.5;
-}
-
-if (balanceUSD < 500) return dailyVolume * 3;
-if (balanceUSD < 2000) return dailyVolume * 2.5;
-if (balanceUSD < 10000) return dailyVolume * 2;
-return dailyVolume * 1.5;
-}
-
-// ============================================================
-// 🔥 CHECK SYSTEM SAFE
-// ============================================================
 async function isSystemSafe(coinSymbol, amountNeeded) {
 try {
 const balanceUSD = await getWalletBalanceUSD(coinSymbol);
@@ -314,8 +285,35 @@ return { safe: true };
 }
 }
 
+function checkEmergencyPause() {
+if (EMERGENCY_PAUSED) {
+throw new Error(`⛔ System is paused: ${PAUSE_REASON || 'Emergency maintenance'}`);
+}
+return true;
+}
+
 // ============================================================
-// 🚨 TELEGRAM NOTIFICATION WITH ACCEPT/DECLINE BUTTONS
+// 📌 SEND TELEGRAM ALERT
+// ============================================================
+async function sendTelegramAlert(message) {
+if (!BOT_TOKEN || !CHAT_ID) return;
+try {
+await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+chat_id: CHAT_ID,
+text: message,
+parse_mode: 'Markdown'
+})
+});
+} catch (error) {
+console.error('❌ Failed to send alert:', error.message);
+}
+}
+
+// ============================================================
+// 🚨 TELEGRAM NOTIFICATION - AUTOMATIC BUY (NO APPROVE BUTTON)
 // ============================================================
 async function sendTelegramOrderNotification(order, transactionType) {
 if (!BOT_TOKEN || !CHAT_ID) {
@@ -334,23 +332,25 @@ let message = '';
 let keyboard = {};
 
 if (transactionType === 'buy') {
+// 🔥 BUY order - NO APPROVE BUTTON! Automatic via webhook
 message = `🧾 *New Purchase Order*\n\n` +
 `💎 *Coin:* ${coinSymbol}\n` +
-`💰 *Amount Received:* ${cryptoAmount.toFixed(8)} ${coinSymbol}\n` +
+`💰 *Amount:* ${cryptoAmount.toFixed(8)} ${coinSymbol}\n` +
 `💵 *USD Value:* $${amountUSD.toFixed(2)}\n` +
 `🇳🇬 *NGN Paid:* ₦${(amountUSD * 1421).toFixed(2)}\n` +
 `📉 *Buffer Applied:* ${bufferPercent}%\n` +
 `📬 *Wallet:* \`${order.walletAddress || 'N/A'}\`\n` +
 `🆔 *Ref:* #${order.tx_ref}\n` +
-`📅 *Time:* ${new Date().toLocaleString()}`;
+`📅 *Time:* ${new Date().toLocaleString()}\n\n` +
+`⏳ Payment will be processed automatically via webhook.`;
 
 keyboard = {
 inline_keyboard: [
-[{ text: '✅ Approve & Send Crypto', callback_data: `approve_buy_${order.tx_ref}` }],
 [{ text: '📊 Check Status', callback_data: `check_order_${order.tx_ref}` }]
 ]
 };
 } else {
+// SELL order - Keep Accept/Decline buttons
 message = `🧾 *New Sell Order*\n\n` +
 `💎 *Coin:* ${coinSymbol}\n` +
 `💰 *Amount:* ${cryptoAmount.toFixed(8)} ${coinSymbol}\n` +
@@ -389,267 +389,10 @@ console.error('❌ Failed to send Telegram notification:', error.message);
 }
 
 // ============================================================
-// 🔧 TELEGRAM WEBHOOK - WITH ACCEPT/DECLINE HANDLING
-// ============================================================
-app.post('/api/telegram-webhook', async (req, res) => {
-res.status(200).send('OK');
-
-try {
-const update = req.body;
-console.log('📥 Telegram webhook received');
-
-if (update.callback_query) {
-const callbackData = update.callback_query.data;
-const chatId = update.callback_query.message.chat.id;
-const callbackQueryId = update.callback_query.id;
-
-console.log(`🔘 Button clicked: ${callbackData}`);
-
-if (!BOT_TOKEN || !CHAT_ID) {
-console.warn('⚠️ Telegram not configured');
-return;
-}
-
-if (chatId.toString() !== CHAT_ID) {
-await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({
-callback_query_id: callbackQueryId,
-text: '❌ Unauthorized',
-show_alert: true
-})
-});
-return;
-}
-
-let responseText = '';
-let showAlert = false;
-
-// ============================================================
-// 🔥 HANDLE APPROVE BUY
-// ============================================================
-if (callbackData.startsWith('approve_buy_')) {
-const tx_ref = callbackData.replace('approve_buy_', '');
-const order = orders[tx_ref];
-
-if (!order) {
-responseText = '❌ Order not found!';
-} else if (order.status === 'completed') {
-responseText = '⚠️ Order already completed!';
-} else if (order.status === 'failed') {
-responseText = '❌ Order failed!';
-} else {
-// PROCESS THE BUY ORDER MANUALLY
-responseText = `⏳ Processing order #${tx_ref}...`;
-showAlert = true;
-
-try {
-const result = await processSuccessfulOrder(order, { manual: true });
-if (result.success) {
-responseText = `✅ *ORDER COMPLETED!*\n\nRef: #${tx_ref}\nCoin: ${order.coinSymbol}\nAmount: ${order.cryptoAmount} ${order.coinSymbol}\n\nCrypto has been sent to customer!`;
-showAlert = true;
-console.log(`✅ Order ${tx_ref} processed successfully via Telegram`);
-} else {
-responseText = `❌ *ORDER FAILED*\n\nRef: #${tx_ref}\nError: ${result.error}`;
-showAlert = true;
-console.log(`❌ Order ${tx_ref} failed: ${result.error}`);
-}
-} catch (error) {
-responseText = `❌ Error processing order: ${error.message}`;
-showAlert = true;
-}
-}
-}
-
-// ============================================================
-// 🔥 HANDLE ACCEPT (SELL)
-// ============================================================
-else if (callbackData.startsWith('accept_')) {
-const tx_ref = callbackData.replace('accept_', '');
-const order = orders[tx_ref];
-
-if (!order) {
-responseText = '❌ Order not found!';
-} else if (order.status === 'approved') {
-responseText = '⚠️ Order already approved!';
-} else if (order.status === 'declined') {
-responseText = '❌ Order was declined!';
-} else {
-order.status = 'approved';
-order.approvedAt = new Date().toISOString();
-responseText = `✅ *ORDER ACCEPTED!*\n\nRef: #${tx_ref}\nCoin: ${order.coinSymbol}\nAmount: ${order.cryptoAmount} ${order.coinSymbol}\n\nPayment will be sent to customer's bank.`;
-showAlert = true;
-console.log(`✅ Order ${tx_ref} ACCEPTED via Telegram`);
-await sendTelegramAlert(`✅ *ORDER ACCEPTED*\n\nRef: #${tx_ref}`);
-}
-}
-
-// ============================================================
-// 🔥 HANDLE DECLINE (SELL)
-// ============================================================
-else if (callbackData.startsWith('decline_')) {
-const tx_ref = callbackData.replace('decline_', '');
-const order = orders[tx_ref];
-
-if (!order) {
-responseText = '❌ Order not found!';
-} else if (order.status === 'approved') {
-responseText = '⚠️ Order already approved!';
-} else if (order.status === 'declined') {
-responseText = '⚠️ Order already declined!';
-} else {
-order.status = 'declined';
-order.declinedAt = new Date().toISOString();
-order.declineReason = 'Declined by admin via Telegram';
-responseText = `❌ *ORDER DECLINED*\n\nRef: #${tx_ref}\nCoin: ${order.coinSymbol}\nAmount: ${order.cryptoAmount} ${order.coinSymbol}\n\nThe customer has been notified.`;
-showAlert = true;
-console.log(`❌ Order ${tx_ref} DECLINED via Telegram`);
-await sendTelegramAlert(`❌ *ORDER DECLINED*\n\nRef: #${tx_ref}`);
-}
-}
-
-// ============================================================
-// 🔥 HANDLE CHECK ORDER
-// ============================================================
-else if (callbackData.startsWith('check_order_')) {
-const tx_ref = callbackData.replace('check_order_', '');
-const order = orders[tx_ref];
-
-if (!order) {
-responseText = '❌ Order not found!';
-} else {
-responseText = `📊 *Order Status*\n\n` +
-`Ref: #${tx_ref}\n` +
-`Coin: ${order.coinSymbol}\n` +
-`Amount: ${order.cryptoAmount} ${order.coinSymbol}\n` +
-`Status: ${order.status.toUpperCase()}\n` +
-`Created: ${new Date(order.createdAt).toLocaleString()}` +
-(order.approvedAt ? `\nApproved: ${new Date(order.approvedAt).toLocaleString()}` : '') +
-(order.declinedAt ? `\nDeclined: ${new Date(order.declinedAt).toLocaleString()}` : '') +
-(order.txId ? `\nTxID: ${order.txId}` : '');
-}
-}
-
-// ============================================================
-// 🔥 HANDLE PAUSE/RESUME/STATUS/WALLETS
-// ============================================================
-else if (callbackData === 'pause_orders') {
-if (EMERGENCY_PAUSED) {
-responseText = '⚠️ System is already paused!';
-} else {
-EMERGENCY_PAUSED = true;
-PAUSE_REASON = 'Emergency pause via Telegram';
-responseText = '⏸️ SYSTEM PAUSED! All orders stopped.';
-showAlert = true;
-console.log('🚨 Emergency pause activated via Telegram');
-await sendTelegramAlert('🚨 *EMERGENCY PAUSE ACTIVATED*\n\nAll orders have been stopped.');
-}
-} else if (callbackData === 'resume_orders') {
-if (!EMERGENCY_PAUSED) {
-responseText = '⚠️ System is already running!';
-} else {
-EMERGENCY_PAUSED = false;
-PAUSE_REASON = '';
-responseText = '▶️ SYSTEM RESUMED! All orders active.';
-showAlert = true;
-console.log('✅ System resumed via Telegram');
-await sendTelegramAlert('✅ *SYSTEM RESUMED*\n\nAll orders are now active.');
-}
-} else if (callbackData === 'check_status') {
-const status = EMERGENCY_PAUSED ? '⛔ PAUSED' : '✅ RUNNING';
-responseText = `${EMERGENCY_PAUSED ? '🔴' : '🟢'} *System Status: ${status}*\n\n📅 ${new Date().toLocaleString()}\n${EMERGENCY_PAUSED ? `📝 Reason: ${PAUSE_REASON}\n` : ''}\nAll systems ${EMERGENCY_PAUSED ? 'are stopped' : 'are operational'}.`;
-} else if (callbackData === 'check_wallets') {
-let walletInfo = '💰 *WALLET BALANCES*\n\n';
-for (const coin of SUPPORTED_COINS) {
-try {
-const balance = await getWalletBalance(coin);
-const price = await getPrice(coin);
-const balanceUSD = balance * price;
-walletInfo += `• ${coin}: ${balance.toFixed(6)} ($${balanceUSD.toFixed(2)})\n`;
-} catch (error) {
-walletInfo += `• ${coin}: ⚠️ Error fetching\n`;
-}
-}
-walletInfo += `\n📅 ${new Date().toLocaleString()}`;
-responseText = walletInfo;
-}
-
-// Answer the callback
-try {
-await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({
-callback_query_id: callbackQueryId,
-text: responseText.replace(/\*/g, '').substring(0, 200),
-show_alert: showAlert
-})
-});
-console.log('✅ Callback answered successfully');
-} catch (error) {
-console.error('❌ Failed to answer callback:', error.message);
-}
-
-await sendPauseControlKeyboard();
-}
-} catch (error) {
-console.error('❌ Telegram webhook processing error:', error.message);
-}
-});
-
-// ============================================================
-// 🔄 AUTO-MONITOR SYSTEM
-// ============================================================
-setInterval(async () => {
-console.log('🔄 Running smart system check for ALL coins...');
-
-for (const coin of SUPPORTED_COINS) {
-try {
-const price = await getPrice(coin);
-if (!yesterdayPrices[coin]) {
-yesterdayPrices[coin] = price;
-}
-
-const balanceUSD = await getWalletBalanceUSD(coin);
-const buffer = await getSmartBuffer(coin);
-const limits = await getSmartSellLimits(coin);
-const stopLoss = await getSmartStopLoss(coin);
-const minBalance = await getSmartMinBalance(coin);
-
-console.log(`📊 ${coin}:`);
-console.log(` Balance: $${balanceUSD.toFixed(2)}`);
-console.log(` Buffer: ${(buffer * 100).toFixed(0)}%`);
-console.log(` Sell Limit: $${limits.perTx}`);
-console.log(` Stop Loss: ${(stopLoss * 100).toFixed(0)}%`);
-console.log(` Min Balance: $${minBalance.toFixed(2)}`);
-
-const safety = await isSystemSafe(coin, 0);
-if (!safety.safe) {
-EMERGENCY_PAUSED = true;
-PAUSE_REASON = `${coin}: ${safety.reason}`;
-await sendTelegramAlert(`🚨 *AUTO-PAUSE ACTIVATED*\n\n${coin}: ${safety.reason}\nAction: ${safety.action}`);
-}
-
-} catch (error) {
-console.error(`❌ Error checking ${coin}:`, error.message);
-}
-}
-
-if (new Date().getHours() === 0) {
-await sendTelegramAlert(`📊 *DAILY SYSTEM REPORT*\n\n${new Date().toLocaleDateString()}\n\nAll systems monitored. ${EMERGENCY_PAUSED ? '⚠️ System is PAUSED' : '✅ System is RUNNING'}`);
-}
-
-}, 60 * 60 * 1000);
-
-// ============================================================
 // 📌 SEND PAUSE CONTROL KEYBOARD
 // ============================================================
 async function sendPauseControlKeyboard() {
-if (!BOT_TOKEN || !CHAT_ID) {
-console.warn('⚠️ Telegram not configured');
-return;
-}
+if (!BOT_TOKEN || !CHAT_ID) return;
 
 const status = EMERGENCY_PAUSED ? '⛔ PAUSED' : '✅ RUNNING';
 const statusColor = EMERGENCY_PAUSED ? '🔴' : '🟢';
@@ -685,24 +428,163 @@ console.error('❌ Failed to send pause control:', error.message);
 }
 
 // ============================================================
-// 📌 SEND TELEGRAM ALERT
+// 🔧 TELEGRAM WEBHOOK
 // ============================================================
-async function sendTelegramAlert(message) {
-if (!BOT_TOKEN || !CHAT_ID) return;
+app.post('/api/telegram-webhook', async (req, res) => {
+res.status(200).send('OK');
+
 try {
-await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+const update = req.body;
+
+if (update.callback_query) {
+const callbackData = update.callback_query.data;
+const chatId = update.callback_query.message.chat.id;
+const callbackQueryId = update.callback_query.id;
+
+if (!BOT_TOKEN || !CHAT_ID) {
+console.warn('⚠️ Telegram not configured');
+return;
+}
+
+if (chatId.toString() !== CHAT_ID) {
+await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
 method: 'POST',
 headers: { 'Content-Type': 'application/json' },
 body: JSON.stringify({
-chat_id: CHAT_ID,
-text: message,
-parse_mode: 'Markdown'
+callback_query_id: callbackQueryId,
+text: '❌ Unauthorized',
+show_alert: true
 })
 });
+return;
+}
+
+let responseText = '';
+let showAlert = false;
+
+// 🔥 SELL: Accept Order
+if (callbackData.startsWith('accept_')) {
+const tx_ref = callbackData.replace('accept_', '');
+const order = orders[tx_ref];
+
+if (!order) {
+responseText = '❌ Order not found!';
+} else if (order.status === 'approved') {
+responseText = '⚠️ Order already approved!';
+} else if (order.status === 'declined') {
+responseText = '❌ Order was declined!';
+} else {
+order.status = 'approved';
+order.approvedAt = new Date().toISOString();
+responseText = `✅ *ORDER ACCEPTED!*\n\nRef: #${tx_ref}\nCoin: ${order.coinSymbol}\nAmount: ${order.cryptoAmount} ${order.coinSymbol}\n\nPayment will be sent to customer's bank.`;
+showAlert = true;
+console.log(`✅ Order ${tx_ref} ACCEPTED via Telegram`);
+await sendTelegramAlert(`✅ *ORDER ACCEPTED*\n\nRef: #${tx_ref}`);
+}
+}
+
+// 🔥 SELL: Decline Order
+else if (callbackData.startsWith('decline_')) {
+const tx_ref = callbackData.replace('decline_', '');
+const order = orders[tx_ref];
+
+if (!order) {
+responseText = '❌ Order not found!';
+} else if (order.status === 'approved') {
+responseText = '⚠️ Order already approved!';
+} else if (order.status === 'declined') {
+responseText = '⚠️ Order already declined!';
+} else {
+order.status = 'declined';
+order.declinedAt = new Date().toISOString();
+responseText = `❌ *ORDER DECLINED*\n\nRef: #${tx_ref}\nCoin: ${order.coinSymbol}\nAmount: ${order.cryptoAmount} ${order.coinSymbol}\n\nThe customer has been notified.`;
+showAlert = true;
+console.log(`❌ Order ${tx_ref} DECLINED via Telegram`);
+await sendTelegramAlert(`❌ *ORDER DECLINED*\n\nRef: #${tx_ref}`);
+}
+}
+
+// 🔥 Check Order Status
+else if (callbackData.startsWith('check_order_')) {
+const tx_ref = callbackData.replace('check_order_', '');
+const order = orders[tx_ref];
+
+if (!order) {
+responseText = '❌ Order not found!';
+} else {
+responseText = `📊 *Order Status*\n\n` +
+`Ref: #${tx_ref}\n` +
+`Coin: ${order.coinSymbol}\n` +
+`Amount: ${order.cryptoAmount} ${order.coinSymbol}\n` +
+`Status: ${order.status.toUpperCase()}\n` +
+`Created: ${new Date(order.createdAt).toLocaleString()}` +
+(order.approvedAt ? `\nApproved: ${new Date(order.approvedAt).toLocaleString()}` : '') +
+(order.declinedAt ? `\nDeclined: ${new Date(order.declinedAt).toLocaleString()}` : '') +
+(order.txId ? `\nTxID: ${order.txId}` : '');
+}
+}
+
+// 🔥 Pause/Resume/Status/Wallets
+else if (callbackData === 'pause_orders') {
+if (EMERGENCY_PAUSED) {
+responseText = '⚠️ System is already paused!';
+} else {
+EMERGENCY_PAUSED = true;
+PAUSE_REASON = 'Emergency pause via Telegram';
+responseText = '⏸️ SYSTEM PAUSED! All orders stopped.';
+showAlert = true;
+await sendTelegramAlert('🚨 *EMERGENCY PAUSE ACTIVATED*\n\nAll orders have been stopped.');
+}
+} else if (callbackData === 'resume_orders') {
+if (!EMERGENCY_PAUSED) {
+responseText = '⚠️ System is already running!';
+} else {
+EMERGENCY_PAUSED = false;
+PAUSE_REASON = '';
+responseText = '▶️ SYSTEM RESUMED! All orders active.';
+showAlert = true;
+await sendTelegramAlert('✅ *SYSTEM RESUMED*\n\nAll orders are now active.');
+}
+} else if (callbackData === 'check_status') {
+const status = EMERGENCY_PAUSED ? '⛔ PAUSED' : '✅ RUNNING';
+responseText = `${EMERGENCY_PAUSED ? '🔴' : '🟢'} *System Status: ${status}*\n\n📅 ${new Date().toLocaleString()}\n${EMERGENCY_PAUSED ? `📝 Reason: ${PAUSE_REASON}\n` : ''}\nAll systems ${EMERGENCY_PAUSED ? 'are stopped' : 'are operational'}.`;
+} else if (callbackData === 'check_wallets') {
+let walletInfo = '💰 *WALLET BALANCES*\n\n';
+for (const coin of SUPPORTED_COINS) {
+try {
+const balance = await getWalletBalance(coin);
+const price = await getPrice(coin);
+walletInfo += `• ${coin}: ${balance.toFixed(6)} ($${(balance * price).toFixed(2)})\n`;
 } catch (error) {
-console.error('❌ Failed to send alert:', error.message);
+walletInfo += `• ${coin}: ⚠️ Error fetching\n`;
 }
 }
+walletInfo += `\n📅 ${new Date().toLocaleString()}`;
+responseText = walletInfo;
+}
+
+// Answer the callback
+try {
+await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+callback_query_id: callbackQueryId,
+text: responseText.replace(/\*/g, '').substring(0, 200),
+show_alert: showAlert
+})
+});
+console.log('✅ Callback answered successfully');
+} catch (error) {
+console.error('❌ Failed to answer callback:', error.message);
+}
+
+await sendPauseControlKeyboard();
+}
+} catch (error) {
+console.error('❌ Telegram webhook processing error:', error.message);
+}
+});
 
 // ============================================================
 // 🔥 GET WALLET FOR COIN
@@ -732,20 +614,9 @@ return wallet;
 }
 
 // ============================================================
-// 🔥 CHECK EMERGENCY PAUSE
-// ============================================================
-function checkEmergencyPause() {
-if (EMERGENCY_PAUSED) {
-throw new Error(`⛔ System is paused: ${PAUSE_REASON || 'Emergency maintenance'}`);
-}
-return true;
-}
-
-// ============================================================
 // 🔥 UNIVERSAL PRIVATE KEY PARSER
 // ============================================================
 function parsePrivateKey(privateKeyInput, coinName) {
-console.log(`🔑 Parsing private key for ${coinName}...`);
 if (!privateKeyInput) {
 throw new Error(`No private key provided for ${coinName}`);
 }
@@ -792,7 +663,6 @@ return input;
 // 🔥 REAL BALANCE CHECKS
 // ============================================================
 async function getWalletBalance(coinSymbol, network) {
-console.log(`🔍 Checking balance for ${coinSymbol}...`);
 try {
 const wallet = getWalletForCoin(coinSymbol, network);
 const address = wallet.address;
@@ -885,19 +755,18 @@ return 0;
 }
 
 // ============================================================
-// 📌 SEND BTC (REAL) - ACCEPTS WIF
+// 📌 SEND BTC
 // ============================================================
 async function sendBTC(privateKeyInput, toAddress, amountBTC) {
 try {
 const wallet = getWalletForCoin('BTC');
-console.log(`📤 Sending ${amountBTC} BTC from ${wallet.address} to ${toAddress}`);
+console.log(`📤 Sending ${amountBTC} BTC to ${toAddress}`);
 
 let utxos;
 try {
 const response = await axios.get(`https://mempool.space/api/address/${wallet.address}/utxo`);
 utxos = response.data || [];
 } catch (error) {
-console.log('⚠️ Mempool.space failed, trying blockchain.info...');
 const response = await axios.get(`https://blockchain.info/unspent?active=${wallet.address}`);
 utxos = response.data.unspent_outputs.map(utxo => ({
 txid: utxo.tx_hash,
@@ -908,32 +777,26 @@ scriptpubkey: utxo.script
 }
 
 if (!utxos || utxos.length === 0) {
-throw new Error('No UTXOs found for this address. Please fund your BTC wallet.');
+throw new Error('No UTXOs found. Please fund your BTC wallet.');
 }
 
 const satoshisNeeded = Math.round(amountBTC * 100000000);
 const totalAvailable = utxos.reduce((sum, utxo) => sum + utxo.value, 0);
-console.log(`💰 Total available: ${totalAvailable} sats`);
-console.log(`💰 Needed: ${satoshisNeeded} sats`);
-
 const estimatedFee = Math.min(25000, Math.round(utxos.length * 2500 + 5000));
 const totalNeeded = satoshisNeeded + estimatedFee;
 
 if (totalAvailable < totalNeeded) {
-throw new Error(`Insufficient funds! Have ${totalAvailable} sats, Need ${totalNeeded} sats including fee`);
+throw new Error(`Insufficient funds! Have ${totalAvailable} sats, Need ${totalNeeded} sats`);
 }
 
 let selectedUTXOs = [];
 let totalSats = 0;
-
 for (const utxo of utxos) {
 if (totalSats < totalNeeded) {
 selectedUTXOs.push(utxo);
 totalSats += utxo.value;
 }
 }
-
-console.log(`✅ Selected ${selectedUTXOs.length} UTXOs, total: ${totalSats} sats`);
 
 let privateKeyWIF = privateKeyInput;
 if (privateKeyInput instanceof Uint8Array) {
@@ -952,7 +815,6 @@ try {
 const response = await axios.get(`https://mempool.space/api/tx/${utxo.txid}/hex`);
 rawTx = response.data;
 } catch (error) {
-console.log('⚠️ Mempool.space tx fetch failed, trying blockchain.info...');
 const response = await axios.get(`https://blockchain.info/rawtx/${utxo.txid}`);
 rawTx = response.data;
 }
@@ -975,16 +837,12 @@ value: satoshisNeeded
 
 const fee = Math.min(estimatedFee, totalSats - satoshisNeeded - 1000);
 const change = totalSats - satoshisNeeded - fee;
-
 if (change > 1000) {
 psbt.addOutput({
 address: wallet.address,
 value: change
 });
-console.log(`💰 Change: ${change} sats sent back to wallet`);
 }
-
-console.log(`💰 Actual fee: ${fee} sats`);
 
 for (let i = 0; i < selectedUTXOs.length; i++) {
 psbt.signInput(i, keyPair);
@@ -998,7 +856,6 @@ let broadcastResponse;
 try {
 broadcastResponse = await axios.post('https://mempool.space/api/tx', txHex);
 } catch (error) {
-console.log('⚠️ Mempool.space broadcast failed, trying blockchain.info...');
 broadcastResponse = await axios.post('https://blockchain.info/pushtx', `tx=${txHex}`);
 }
 
@@ -1011,43 +868,32 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND SOL (REAL) - ACCEPTS ALL FORMATS
+// 📌 SEND SOL
 // ============================================================
 async function sendSOL(privateKeyInput, toAddress, amountSOL) {
 try {
 console.log(`📤 Sending ${amountSOL} SOL to ${toAddress}`);
-
 const connection = new Connection(SOLANA_RPC);
-
 let secretKey = parsePrivateKey(privateKeyInput, 'SOL');
 
 if (typeof secretKey === 'string') {
 try {
 const decoded = bs58.decode(secretKey);
-if (decoded.length === 64) {
-secretKey = Uint8Array.from(decoded);
-console.log('✅ SOL: Using Base58 format');
-}
-} catch (e) { /* Not base58 */ }
-
+if (decoded.length === 64) secretKey = Uint8Array.from(decoded);
+} catch (e) {}
 if (typeof secretKey === 'string') {
 try {
 const buffer = Buffer.from(secretKey, 'base64');
-if (buffer.length === 64) {
-secretKey = Uint8Array.from(buffer);
-console.log('✅ SOL: Using Base64 format');
+if (buffer.length === 64) secretKey = Uint8Array.from(buffer);
+} catch (e) {}
 }
-} catch (e) { /* Not base64 */ }
-}
-
 if (typeof secretKey === 'string') {
 try {
 const hexClean = secretKey.replace('0x', '').trim();
 if (/^[0-9a-f]{64}$/i.test(hexClean)) {
 secretKey = Uint8Array.from(Buffer.from(hexClean, 'hex'));
-console.log('✅ SOL: Using Hex format');
 }
-} catch (e) { /* Not hex */ }
+} catch (e) {}
 }
 }
 
@@ -1056,9 +902,8 @@ try {
 const array = JSON.parse(secretKey);
 if (Array.isArray(array) && array.length === 64) {
 secretKey = Uint8Array.from(array);
-console.log('✅ SOL: Using JSON array format');
 }
-} catch (e) { /* Not JSON */ }
+} catch (e) {}
 }
 
 if (!secretKey || secretKey.length !== 64) {
@@ -1068,10 +913,6 @@ throw new Error(`Invalid Solana private key. Length: ${secretKey ? secretKey.len
 const fromKeypair = Keypair.fromSecretKey(secretKey);
 const toPublicKey = new PublicKey(toAddress);
 const lamports = Math.round(amountSOL * LAMPORTS_PER_SOL);
-
-console.log(`🔑 From: ${fromKeypair.publicKey.toString()}`);
-console.log(`📬 To: ${toPublicKey.toString()}`);
-console.log(`💰 Lamports: ${lamports}`);
 
 const transaction = new Transaction().add(
 SystemProgram.transfer({
@@ -1091,13 +932,13 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND ETH (REAL) - ACCEPTS HEX, BASE64, JSON ARRAY
+// 📌 SEND ETH
 // ============================================================
 async function sendETH(privateKeyInput, toAddress, amountETH) {
 try {
 const provider = new ethers.JsonRpcProvider(ETH_RPC);
-
 let privateKey = privateKeyInput;
+
 if (privateKeyInput instanceof Uint8Array) {
 privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
 } else if (Buffer.isBuffer(privateKeyInput)) {
@@ -1112,7 +953,7 @@ const decoded = bs58.decode(privateKeyInput);
 if (decoded.length === 32) {
 privateKey = '0x' + Buffer.from(decoded).toString('hex');
 }
-} catch (e) { /* Not base58 */ }
+} catch (e) {}
 }
 }
 
@@ -1135,13 +976,13 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND BNB (REAL) - ACCEPTS ALL FORMATS
+// 📌 SEND BNB
 // ============================================================
 async function sendBNB(privateKeyInput, toAddress, amountBNB) {
 try {
 const provider = new ethers.JsonRpcProvider(BSC_RPC);
-
 let privateKey = privateKeyInput;
+
 if (privateKeyInput instanceof Uint8Array) {
 privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
 } else if (Buffer.isBuffer(privateKeyInput)) {
@@ -1156,7 +997,7 @@ const decoded = bs58.decode(privateKeyInput);
 if (decoded.length === 32) {
 privateKey = '0x' + Buffer.from(decoded).toString('hex');
 }
-} catch (e) { /* Not base58 */ }
+} catch (e) {}
 }
 }
 
@@ -1179,41 +1020,31 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND USDC ON SOLANA (REAL)
+// 📌 SEND USDC ON SOLANA
 // ============================================================
 async function sendUSDCOnSolana(privateKeyInput, toAddress, amountUSDC) {
 try {
 const connection = new Connection(SOLANA_RPC);
-
 let secretKey = parsePrivateKey(privateKeyInput, 'USDC-SOL');
 
 if (typeof secretKey === 'string') {
 try {
 const decoded = bs58.decode(secretKey);
-if (decoded.length === 64) {
-secretKey = Uint8Array.from(decoded);
-console.log('✅ USDC-SOL: Using Base58 format');
-}
-} catch (e) { /* Not base58 */ }
-
+if (decoded.length === 64) secretKey = Uint8Array.from(decoded);
+} catch (e) {}
 if (typeof secretKey === 'string') {
 try {
 const buffer = Buffer.from(secretKey, 'base64');
-if (buffer.length === 64) {
-secretKey = Uint8Array.from(buffer);
-console.log('✅ USDC-SOL: Using Base64 format');
+if (buffer.length === 64) secretKey = Uint8Array.from(buffer);
+} catch (e) {}
 }
-} catch (e) { /* Not base64 */ }
-}
-
 if (typeof secretKey === 'string') {
 try {
 const hexClean = secretKey.replace('0x', '').trim();
 if (/^[0-9a-f]{64}$/i.test(hexClean)) {
 secretKey = Uint8Array.from(Buffer.from(hexClean, 'hex'));
-console.log('✅ USDC-SOL: Using Hex format');
 }
-} catch (e) { /* Not hex */ }
+} catch (e) {}
 }
 }
 
@@ -1222,9 +1053,8 @@ try {
 const array = JSON.parse(secretKey);
 if (Array.isArray(array) && array.length === 64) {
 secretKey = Uint8Array.from(array);
-console.log('✅ USDC-SOL: Using JSON array format');
 }
-} catch (e) { /* Not JSON */ }
+} catch (e) {}
 }
 
 if (!secretKey || secretKey.length !== 64) {
@@ -1239,25 +1069,12 @@ const toTokenAccount = await getAssociatedTokenAddress(TOKEN_MINT, toPublicKey);
 
 const toAccountInfo = await connection.getAccountInfo(toTokenAccount);
 const transaction = new Transaction();
-
 if (!toAccountInfo) {
-transaction.add(
-createAssociatedTokenAccountInstruction(
-fromKeypair.publicKey,
-toTokenAccount,
-toPublicKey,
-TOKEN_MINT
-)
-);
+transaction.add(createAssociatedTokenAccountInstruction(fromKeypair.publicKey, toTokenAccount, toPublicKey, TOKEN_MINT));
 }
 
 const amount = Math.round(amountUSDC * 1000000);
-const transferIx = createTransferInstruction(
-fromTokenAccount,
-toTokenAccount,
-fromKeypair.publicKey,
-amount
-);
+const transferIx = createTransferInstruction(fromTokenAccount, toTokenAccount, fromKeypair.publicKey, amount);
 transaction.add(transferIx);
 
 const signature = await connection.sendTransaction(transaction, [fromKeypair]);
@@ -1270,7 +1087,7 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND USDT ON TRON (REAL)
+// 📌 SEND USDT ON TRON
 // ============================================================
 async function sendUSDTOnTron(privateKeyInput, toAddress, amountUSDT) {
 try {
@@ -1286,15 +1103,11 @@ const decoded = bs58.decode(privateKeyInput);
 if (decoded.length === 32) {
 privateKey = Buffer.from(decoded).toString('hex');
 }
-} catch (e) { /* Not base58 */ }
+} catch (e) {}
 }
 }
 
-const tronWeb = new TronWeb({
-fullHost: TRON_RPC,
-privateKey: privateKey
-});
-
+const tronWeb = new TronWeb({ fullHost: TRON_RPC, privateKey: privateKey });
 const contractAddress = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 const contract = await tronWeb.contract().at(contractAddress);
 const amount = amountUSDT * 1000000;
@@ -1308,7 +1121,7 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND XRP (REAL)
+// 📌 SEND XRP
 // ============================================================
 async function sendXRP(privateKeyInput, toAddress, amountXRP) {
 try {
@@ -1327,7 +1140,7 @@ const decoded = bs58.decode(privateKeyInput);
 if (decoded.length === 32) {
 privateKey = Buffer.from(decoded).toString('hex');
 }
-} catch (e) { /* Not base58 */ }
+} catch (e) {}
 }
 }
 
@@ -1353,7 +1166,7 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND LTC (REAL)
+// 📌 SEND LTC
 // ============================================================
 async function sendLTC(privateKeyInput, toAddress, amountLTC) {
 try {
@@ -1361,10 +1174,7 @@ const wallet = getWalletForCoin('LTC');
 const LITECOIN = {
 messagePrefix: '\x19Litecoin Signed Message:\n',
 bech32: 'ltc',
-bip32: {
-public: 0x019da462,
-private: 0x019d9cfe
-},
+bip32: { public: 0x019da462, private: 0x019d9cfe },
 pubKeyHash: 0x30,
 scriptHash: 0x32,
 wif: 0xb0
@@ -1439,13 +1249,13 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND AVAX (REAL) - ACCEPTS ALL FORMATS
+// 📌 SEND AVAX
 // ============================================================
 async function sendAVAX(privateKeyInput, toAddress, amountAVAX) {
 try {
 const provider = new ethers.JsonRpcProvider(AVALANCHE_RPC);
-
 let privateKey = privateKeyInput;
+
 if (privateKeyInput instanceof Uint8Array) {
 privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
 } else if (Buffer.isBuffer(privateKeyInput)) {
@@ -1460,7 +1270,7 @@ const decoded = bs58.decode(privateKeyInput);
 if (decoded.length === 32) {
 privateKey = '0x' + Buffer.from(decoded).toString('hex');
 }
-} catch (e) { /* Not base58 */ }
+} catch (e) {}
 }
 }
 
@@ -1483,13 +1293,13 @@ throw error;
 }
 
 // ============================================================
-// 📌 SEND ERC20 TOKEN (REAL) - FOR USDC, USDT, LINK
+// 📌 SEND ERC20 (USDC, USDT, LINK)
 // ============================================================
 async function sendERC20(privateKeyInput, toAddress, amount, contractAddress, decimals = 6) {
 try {
 const provider = new ethers.JsonRpcProvider(ETH_RPC);
-
 let privateKey = privateKeyInput;
+
 if (privateKeyInput instanceof Uint8Array) {
 privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
 } else if (Buffer.isBuffer(privateKeyInput)) {
@@ -1504,7 +1314,7 @@ const decoded = bs58.decode(privateKeyInput);
 if (decoded.length === 32) {
 privateKey = '0x' + Buffer.from(decoded).toString('hex');
 }
-} catch (e) { /* Not base58 */ }
+} catch (e) {}
 }
 }
 
@@ -1527,7 +1337,7 @@ throw error;
 }
 
 // ============================================================
-// 📌 MAIN SEND FUNCTION WITH SMART BUFFER
+// 📌 MAIN SEND FUNCTION
 // ============================================================
 async function sendCryptoFromWallet(coinSymbol, toAddress, requestedAmount, network) {
 console.log(`📤 Sending ${requestedAmount} ${coinSymbol} to ${toAddress}`);
@@ -1634,11 +1444,15 @@ return { success: false, error: error.message };
 }
 
 // ============================================================
-// 📌 PROCESS SUCCESSFUL ORDER
+// 📌 PROCESS SUCCESSFUL ORDER - THIS IS THE KEY FUNCTION!
 // ============================================================
 async function processSuccessfulOrder(order, paymentData) {
 try {
 console.log(`\n🚀 Processing order: ${order.tx_ref}`);
+console.log(`📊 Coin: ${order.coinSymbol}`);
+console.log(`📊 Amount: ${order.cryptoAmount}`);
+console.log(`📊 Wallet: ${order.walletAddress}`);
+
 if (order.status === 'completed') {
 console.log(`⚠️ Order already completed. Skipping.`);
 return { success: true, alreadyProcessed: true };
@@ -1659,9 +1473,11 @@ const balance = await getWalletBalance(order.coinSymbol, order.network);
 if (balance < order.cryptoAmount) {
 order.status = 'failed';
 order.failureReason = `Insufficient balance: Have ${balance}, Need ${order.cryptoAmount}`;
+console.log(`❌ Insufficient balance for ${order.coinSymbol}`);
 return { success: false, error: order.failureReason };
 }
 
+// 🔥 SEND CRYPTO - THIS IS WHERE IT HAPPENS!
 const txResult = await sendCryptoFromWallet(
 order.coinSymbol,
 order.walletAddress,
@@ -1676,12 +1492,27 @@ order.explorerUrl = txResult.explorerUrl;
 order.completedAt = new Date().toISOString();
 order.paymentData = paymentData;
 order.bufferApplied = txResult.buffer;
-console.log(`✅ Order completed! TxID: ${txResult.txId}`);
+
+console.log(`✅ ORDER COMPLETED! TxID: ${txResult.txId}`);
+
+// 🔥 Send Telegram notification that order is complete
+await sendTelegramAlert(
+`✅ *ORDER COMPLETED!*\n\n` +
+`Ref: #${order.tx_ref}\n` +
+`Coin: ${order.coinSymbol}\n` +
+`Amount: ${order.cryptoAmount} ${order.coinSymbol}\n` +
+`TxID: ${txResult.txId}\n` +
+`Explorer: ${txResult.explorerUrl}\n\n` +
+`Crypto has been sent to customer! 🎉`
+);
+
 return { success: true, txId: txResult.txId };
 } else {
 order.status = 'failed';
 order.failureReason = txResult.error;
 order.completedAt = new Date().toISOString();
+console.log(`❌ Failed to send crypto: ${txResult.error}`);
+await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${order.tx_ref}\nError: ${txResult.error}`);
 return { success: false, error: txResult.error };
 }
 
@@ -1689,31 +1520,13 @@ return { success: false, error: txResult.error };
 console.error('❌ Process order error:', error.message);
 order.status = 'failed';
 order.failureReason = error.message;
+await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${order.tx_ref}\nError: ${error.message}`);
 return { success: false, error: error.message };
 }
 }
 
 // ============================================================
-// 📌 CHECK BALANCE
-// ============================================================
-app.post('/api/check-balance', async (req, res) => {
-try {
-checkEmergencyPause();
-const { coinSymbol, network, amount } = req.body;
-const balance = await getWalletBalance(coinSymbol, network);
-const hasBalance = balance >= amount;
-res.json({ success: true, hasBalance: hasBalance, balance: balance, requested: amount });
-} catch (error) {
-if (error.message.includes('paused')) {
-res.status(503).json({ success: false, error: 'System paused', paused: true });
-} else {
-res.status(500).json({ success: false, error: error.message });
-}
-}
-});
-
-// ============================================================
-// 📌 CREATE PAYMENT WITH SMART BUFFER + TELEGRAM NOTIFICATION
+// 📌 CREATE PAYMENT
 // ============================================================
 app.post('/api/create-payment', async (req, res) => {
 try {
@@ -1773,6 +1586,7 @@ transactionType: 'buy'
 
 console.log(`📝 Order created: ${tx_ref}`);
 
+// Send Telegram notification for BUY (no approve button - automatic!)
 await sendTelegramOrderNotification(orders[tx_ref], 'buy');
 
 const paymentData = {
@@ -1834,7 +1648,7 @@ res.status(500).json({ success: false, error: error.message });
 });
 
 // ============================================================
-// 📌 VERIFY PAYMENT
+// 📌 VERIFY PAYMENT - Frontend polls this
 // ============================================================
 app.get('/api/verify-payment', async (req, res) => {
 try {
@@ -1852,6 +1666,34 @@ return res.status(404).json({ error: 'Order not found', tx_ref: tx_ref });
 
 console.log(`✅ Order found: ${tx_ref}, Status: ${order.status}`);
 
+// If order is already completed, return success
+if (order.status === 'completed') {
+return res.json({
+success: true,
+message: 'Crypto has been sent!',
+order: order
+});
+}
+
+// If order is already approved (SELL), return approved
+if (order.status === 'approved') {
+return res.json({
+success: true,
+message: 'Order approved!',
+order: order
+});
+}
+
+// If order is declined, return declined
+if (order.status === 'declined') {
+return res.json({
+success: false,
+message: 'Order declined.',
+order: order
+});
+}
+
+// Verify with Flutterwave
 const response = await fetch(`https://api.flutterwave.com/v3/transactions/${tx_ref}/verify`, {
 headers: { 'Authorization': `Bearer ${FLUTTERWAVE_SECRET}` }
 });
@@ -1859,21 +1701,30 @@ headers: { 'Authorization': `Bearer ${FLUTTERWAVE_SECRET}` }
 const data = await response.json();
 
 if (data.status === 'success' && data.data.status === 'successful') {
-// Process the order
+// 🔥 PAYMENT CONFIRMED - PROCESS THE ORDER AUTOMATICALLY!
+console.log(`💰 Payment confirmed for ${tx_ref}. Processing order...`);
 const result = await processSuccessfulOrder(order, data.data);
+
 if (result.success) {
-res.json({ success: true, message: 'Payment verified! Crypto sent!', order: order });
+return res.json({
+success: true,
+message: 'Payment verified! Crypto sent!',
+order: order
+});
 } else {
-res.json({ success: false, message: 'Payment verified but crypto send failed.', order: order });
+return res.json({
+success: false,
+message: 'Payment verified but crypto send failed.',
+order: order
+});
 }
-} else if (order.status === 'completed') {
-res.json({ success: true, message: 'Crypto has been sent!', order: order });
-} else if (order.status === 'approved') {
-res.json({ success: true, message: 'Order approved!', order: order });
-} else if (order.status === 'declined') {
-res.json({ success: false, message: 'Order declined.', order: order });
 } else {
-res.json({ success: false, message: 'Payment not confirmed yet.', order: order });
+// Payment not confirmed yet
+return res.json({
+success: false,
+message: 'Payment not confirmed yet.',
+order: order
+});
 }
 } catch (error) {
 console.error('❌ Verify payment error:', error.message);
@@ -1893,7 +1744,7 @@ res.json({ success: true, order: order });
 });
 
 // ============================================================
-// 📌 CREATE SELL ORDER (for customers selling crypto)
+// 📌 CREATE SELL ORDER
 // ============================================================
 app.post('/api/create-sell-order', async (req, res) => {
 try {
@@ -1979,11 +1830,19 @@ return res.status(404).send('Order not found');
 
 console.log(`📊 Processing order: ${tx_ref}`);
 
+// 🔥 PROCESS THE ORDER AUTOMATICALLY!
 const result = await processSuccessfulOrder(order, event.data);
 
 if (result.success) {
 console.log(`✅ Order ${tx_ref} completed successfully!`);
-await sendTelegramAlert(`✅ *ORDER COMPLETED*\n\nRef: #${tx_ref}\nCoin: ${order.coinSymbol}\nAmount: ${order.cryptoAmount} ${order.coinSymbol}\n\nCrypto sent to customer!`);
+await sendTelegramAlert(
+`✅ *ORDER COMPLETED!*\n\n` +
+`Ref: #${tx_ref}\n` +
+`Coin: ${order.coinSymbol}\n` +
+`Amount: ${order.cryptoAmount} ${order.coinSymbol}\n` +
+`TxID: ${result.txId}\n\n` +
+`Crypto sent to customer! 🎉`
+);
 } else {
 console.log(`❌ Order ${tx_ref} failed: ${result.error}`);
 await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${tx_ref}\nError: ${result.error}`);
@@ -2107,6 +1966,53 @@ res.status(400).json({ status: 'error', message: data.message || 'Invalid accoun
 res.status(500).json({ status: 'error', message: error.message });
 }
 });
+
+// ============================================================
+// 🔄 AUTO-MONITOR SYSTEM
+// ============================================================
+setInterval(async () => {
+console.log('🔄 Running smart system check...');
+
+for (const coin of SUPPORTED_COINS) {
+try {
+const price = await getPrice(coin);
+if (!yesterdayPrices[coin]) {
+yesterdayPrices[coin] = price;
+}
+
+const balanceUSD = await getWalletBalanceUSD(coin);
+const buffer = await getSmartBuffer(coin);
+const limits = await getSmartSellLimits(coin);
+const stopLoss = await getSmartStopLoss(coin);
+const minBalance = await getSmartMinBalance(coin);
+
+console.log(`📊 ${coin}: Balance: $${balanceUSD.toFixed(2)}, Buffer: ${(buffer * 100).toFixed(0)}%`);
+
+const safety = await isSystemSafe(coin, 0);
+if (!safety.safe) {
+EMERGENCY_PAUSED = true;
+PAUSE_REASON = `${coin}: ${safety.reason}`;
+await sendTelegramAlert(`🚨 *AUTO-PAUSE ACTIVATED*\n\n${coin}: ${safety.reason}`);
+}
+
+} catch (error) {
+console.error(`❌ Error checking ${coin}:`, error.message);
+}
+}
+
+if (new Date().getHours() === 0) {
+await sendTelegramAlert(`📊 *DAILY SYSTEM REPORT*\n\n${new Date().toLocaleDateString()}\n\nAll systems monitored. ${EMERGENCY_PAUSED ? '⚠️ System is PAUSED' : '✅ System is RUNNING'}`);
+}
+
+}, 60 * 60 * 1000);
+
+// Send initial Telegram keyboard on startup
+setTimeout(async () => {
+if (BOT_TOKEN && CHAT_ID) {
+await sendPauseControlKeyboard();
+console.log('✅ Telegram control keyboard sent');
+}
+}, 5000);
 
 // ============================================================
 // 📌 START SERVER
