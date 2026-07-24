@@ -19,13 +19,12 @@ app.use(cors());
 app.use(express.json());
 
 // ============================================================
-// 🔥 CONFIGURATION - ALL FROM ENVIRONMENT VARIABLES
+// 🔥 CONFIGURATION
 // ============================================================
 const FLUTTERWAVE_SECRET = process.env.FLUTTERWAVE_SECRET;
 const FLUTTERWAVE_WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const BACKEND_URL = process.env.BACKEND_URL || 'https://automatic-backend.onrender.com';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://dubpaydub.netlify.app';
-
 const INFURA_KEY = process.env.INFURA_KEY;
 
 const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
@@ -35,7 +34,7 @@ const TRON_RPC = 'https://api.trongrid.io';
 const ETH_RPC = `https://mainnet.infura.io/v3/${INFURA_KEY}`;
 
 // ============================================================
-// 🔥 TELEGRAM BOT - FROM ENVIRONMENT VARIABLES
+// 🔥 TELEGRAM BOT
 // ============================================================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
@@ -112,7 +111,7 @@ dailyVolumes[coinSymbol] += amount;
 }
 
 // ============================================================
-// 🔥 PRICE SYSTEM - WITH CACHING (NO 429 ERRORS)
+// 🔥 PRICE SYSTEM
 // ============================================================
 let cachedPrices = null;
 let lastPriceFetch = 0;
@@ -132,9 +131,7 @@ return null;
 
 async function getPrice(coinSymbol) {
 try {
-if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
-return 1.00;
-}
+if (coinSymbol === 'USDC' || coinSymbol === 'USDT') return 1.00;
 
 const now = Date.now();
 if (cachedPrices && (now - lastPriceFetch < 300000)) {
@@ -144,9 +141,7 @@ const coinMap = {
 'AVAX': 'avalanche-2', 'LINK': 'chainlink'
 };
 const id = coinMap[coinSymbol];
-if (id && cachedPrices[id]) {
-return cachedPrices[id].usd;
-}
+if (id && cachedPrices[id]) return cachedPrices[id].usd;
 }
 
 const prices = await getAllPrices();
@@ -159,9 +154,7 @@ const coinMap = {
 'AVAX': 'avalanche-2', 'LINK': 'chainlink'
 };
 const id = coinMap[coinSymbol];
-if (id && prices[id]) {
-return prices[id].usd;
-}
+if (id && prices[id]) return prices[id].usd;
 }
 
 return priceCache[coinSymbol] || 0;
@@ -176,7 +169,6 @@ return priceCache[coinSymbol] || 0;
 // ============================================================
 async function getSmartBuffer(coinSymbol) {
 const balanceUSD = await getWalletBalanceUSD(coinSymbol);
-
 if (balanceUSD < 10) return 0.20;
 if (coinSymbol === 'USDC' || coinSymbol === 'USDT') {
 if (balanceUSD < 500) return 0.08;
@@ -313,7 +305,7 @@ console.error('❌ Failed to send alert:', error.message);
 }
 
 // ============================================================
-// 🚨 TELEGRAM NOTIFICATION - AUTOMATIC BUY (NO APPROVE BUTTON)
+// 🚨 TELEGRAM NOTIFICATION - AUTOMATIC BUY
 // ============================================================
 async function sendTelegramOrderNotification(order, transactionType) {
 if (!BOT_TOKEN || !CHAT_ID) {
@@ -332,7 +324,6 @@ let message = '';
 let keyboard = {};
 
 if (transactionType === 'buy') {
-// 🔥 BUY order - NO APPROVE BUTTON! Automatic via webhook
 message = `🧾 *New Purchase Order*\n\n` +
 `💎 *Coin:* ${coinSymbol}\n` +
 `💰 *Amount:* ${cryptoAmount.toFixed(8)} ${coinSymbol}\n` +
@@ -342,7 +333,7 @@ message = `🧾 *New Purchase Order*\n\n` +
 `📬 *Wallet:* \`${order.walletAddress || 'N/A'}\`\n` +
 `🆔 *Ref:* #${order.tx_ref}\n` +
 `📅 *Time:* ${new Date().toLocaleString()}\n\n` +
-`⏳ Payment will be processed automatically via webhook.`;
+`⏳ Processing automatically...`;
 
 keyboard = {
 inline_keyboard: [
@@ -350,7 +341,6 @@ inline_keyboard: [
 ]
 };
 } else {
-// SELL order - Keep Accept/Decline buttons
 message = `🧾 *New Sell Order*\n\n` +
 `💎 *Coin:* ${coinSymbol}\n` +
 `💰 *Amount:* ${cryptoAmount.toFixed(8)} ${coinSymbol}\n` +
@@ -462,7 +452,7 @@ return;
 let responseText = '';
 let showAlert = false;
 
-// 🔥 SELL: Accept Order
+// SELL: Accept Order
 if (callbackData.startsWith('accept_')) {
 const tx_ref = callbackData.replace('accept_', '');
 const order = orders[tx_ref];
@@ -483,7 +473,7 @@ await sendTelegramAlert(`✅ *ORDER ACCEPTED*\n\nRef: #${tx_ref}`);
 }
 }
 
-// 🔥 SELL: Decline Order
+// SELL: Decline Order
 else if (callbackData.startsWith('decline_')) {
 const tx_ref = callbackData.replace('decline_', '');
 const order = orders[tx_ref];
@@ -504,7 +494,7 @@ await sendTelegramAlert(`❌ *ORDER DECLINED*\n\nRef: #${tx_ref}`);
 }
 }
 
-// 🔥 Check Order Status
+// Check Order Status
 else if (callbackData.startsWith('check_order_')) {
 const tx_ref = callbackData.replace('check_order_', '');
 const order = orders[tx_ref];
@@ -524,7 +514,7 @@ responseText = `📊 *Order Status*\n\n` +
 }
 }
 
-// 🔥 Pause/Resume/Status/Wallets
+// Pause/Resume/Status/Wallets
 else if (callbackData === 'pause_orders') {
 if (EMERGENCY_PAUSED) {
 responseText = '⚠️ System is already paused!';
@@ -753,6 +743,11 @@ console.error(`❌ Balance check error for ${coinSymbol}:`, error.message);
 return 0;
 }
 }
+
+// ============================================================
+// 📌 ALL SEND FUNCTIONS (BTC, SOL, ETH, BNB, USDC, USDT, XRP, LTC, AVAX, LINK)
+// ============================================================
+// [All send functions - same as before]
 
 // ============================================================
 // 📌 SEND BTC
@@ -1444,7 +1439,7 @@ return { success: false, error: error.message };
 }
 
 // ============================================================
-// 📌 PROCESS SUCCESSFUL ORDER - THIS IS THE KEY FUNCTION!
+// 📌 PROCESS SUCCESSFUL ORDER - COMPLETE FIX WITH AUTO CLEANUP
 // ============================================================
 async function processSuccessfulOrder(order, paymentData) {
 try {
@@ -1460,12 +1455,44 @@ return { success: true, alreadyProcessed: true };
 
 checkEmergencyPause();
 
+// Check if payment is actually successful
+if (paymentData && paymentData.status !== 'successful' && paymentData.manual !== true) {
+// Payment not successful - mark as failed
+order.status = 'failed';
+order.failureReason = 'Payment not successful';
+order.failedAt = new Date().toISOString();
+console.log(`❌ Order ${order.tx_ref} failed - payment not successful`);
+
+// Send Telegram alert
+await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${order.tx_ref}\nCoin: ${order.coinSymbol}\nAmount: ${order.cryptoAmount} ${order.coinSymbol}\nReason: Payment not successful`);
+
+// Auto-cleanup: remove from orders after 1 hour
+setTimeout(() => {
+if (orders[order.tx_ref] && orders[order.tx_ref].status === 'failed') {
+console.log(`🧹 Auto-cleaning failed order: ${order.tx_ref}`);
+delete orders[order.tx_ref];
+}
+}, 3600000); // 1 hour
+
+return { success: false, error: 'Payment not successful' };
+}
+
 const safety = await isSystemSafe(order.coinSymbol, order.cryptoAmount);
 if (!safety.safe) {
 order.status = 'failed';
 order.failureReason = `System not safe: ${safety.reason}`;
+order.failedAt = new Date().toISOString();
 console.log(`❌ Order failed: ${safety.reason}`);
 await sendTelegramAlert(`🚨 *ORDER FAILED*\n\n${order.tx_ref}\n${safety.reason}`);
+
+// Auto-cleanup after 1 hour
+setTimeout(() => {
+if (orders[order.tx_ref] && orders[order.tx_ref].status === 'failed') {
+console.log(`🧹 Auto-cleaning failed order: ${order.tx_ref}`);
+delete orders[order.tx_ref];
+}
+}, 3600000);
+
 return { success: false, error: safety.reason };
 }
 
@@ -1473,7 +1500,17 @@ const balance = await getWalletBalance(order.coinSymbol, order.network);
 if (balance < order.cryptoAmount) {
 order.status = 'failed';
 order.failureReason = `Insufficient balance: Have ${balance}, Need ${order.cryptoAmount}`;
+order.failedAt = new Date().toISOString();
 console.log(`❌ Insufficient balance for ${order.coinSymbol}`);
+
+// Auto-cleanup after 1 hour
+setTimeout(() => {
+if (orders[order.tx_ref] && orders[order.tx_ref].status === 'failed') {
+console.log(`🧹 Auto-cleaning failed order: ${order.tx_ref}`);
+delete orders[order.tx_ref];
+}
+}, 3600000);
+
 return { success: false, error: order.failureReason };
 }
 
@@ -1495,7 +1532,7 @@ order.bufferApplied = txResult.buffer;
 
 console.log(`✅ ORDER COMPLETED! TxID: ${txResult.txId}`);
 
-// 🔥 Send Telegram notification that order is complete
+// Send Telegram notification
 await sendTelegramAlert(
 `✅ *ORDER COMPLETED!*\n\n` +
 `Ref: #${order.tx_ref}\n` +
@@ -1506,13 +1543,30 @@ await sendTelegramAlert(
 `Crypto has been sent to customer! 🎉`
 );
 
+// Auto-cleanup completed orders after 24 hours
+setTimeout(() => {
+if (orders[order.tx_ref] && orders[order.tx_ref].status === 'completed') {
+console.log(`🧹 Auto-cleaning completed order: ${order.tx_ref}`);
+delete orders[order.tx_ref];
+}
+}, 86400000); // 24 hours
+
 return { success: true, txId: txResult.txId };
 } else {
 order.status = 'failed';
 order.failureReason = txResult.error;
-order.completedAt = new Date().toISOString();
+order.failedAt = new Date().toISOString();
 console.log(`❌ Failed to send crypto: ${txResult.error}`);
 await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${order.tx_ref}\nError: ${txResult.error}`);
+
+// Auto-cleanup after 1 hour
+setTimeout(() => {
+if (orders[order.tx_ref] && orders[order.tx_ref].status === 'failed') {
+console.log(`🧹 Auto-cleaning failed order: ${order.tx_ref}`);
+delete orders[order.tx_ref];
+}
+}, 3600000);
+
 return { success: false, error: txResult.error };
 }
 
@@ -1520,7 +1574,16 @@ return { success: false, error: txResult.error };
 console.error('❌ Process order error:', error.message);
 order.status = 'failed';
 order.failureReason = error.message;
-await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${order.tx_ref}\nError: ${error.message}`);
+order.failedAt = new Date().toISOString();
+
+// Auto-cleanup after 1 hour
+setTimeout(() => {
+if (orders[order.tx_ref] && orders[order.tx_ref].status === 'failed') {
+console.log(`🧹 Auto-cleaning failed order: ${order.tx_ref}`);
+delete orders[order.tx_ref];
+}
+}, 3600000);
+
 return { success: false, error: error.message };
 }
 }
@@ -1586,7 +1649,7 @@ transactionType: 'buy'
 
 console.log(`📝 Order created: ${tx_ref}`);
 
-// Send Telegram notification for BUY (no approve button - automatic!)
+// Send Telegram notification
 await sendTelegramOrderNotification(orders[tx_ref], 'buy');
 
 const paymentData = {
@@ -1648,7 +1711,7 @@ res.status(500).json({ success: false, error: error.message });
 });
 
 // ============================================================
-// 📌 VERIFY PAYMENT - Frontend polls this
+// 📌 VERIFY PAYMENT - Frontend polls this - NOW FULLY AUTOMATIC!
 // ============================================================
 app.get('/api/verify-payment', async (req, res) => {
 try {
@@ -1693,7 +1756,17 @@ order: order
 });
 }
 
+// If order is failed, return failed
+if (order.status === 'failed') {
+return res.json({
+success: false,
+message: 'Order failed.',
+order: order
+});
+}
+
 // Verify with Flutterwave
+try {
 const response = await fetch(`https://api.flutterwave.com/v3/transactions/${tx_ref}/verify`, {
 headers: { 'Authorization': `Bearer ${FLUTTERWAVE_SECRET}` }
 });
@@ -1718,11 +1791,41 @@ message: 'Payment verified but crypto send failed.',
 order: order
 });
 }
+} else if (data.status === 'success' && data.data.status === 'failed') {
+// Payment failed - mark order as failed
+order.status = 'failed';
+order.failureReason = 'Flutterwave payment failed';
+order.failedAt = new Date().toISOString();
+console.log(`❌ Payment failed for ${tx_ref}`);
+
+// Auto-cleanup after 1 hour
+setTimeout(() => {
+if (orders[tx_ref] && orders[tx_ref].status === 'failed') {
+console.log(`🧹 Auto-cleaning failed order: ${tx_ref}`);
+delete orders[tx_ref];
+}
+}, 3600000);
+
+return res.json({
+success: false,
+message: 'Payment failed.',
+order: order
+});
 } else {
-// Payment not confirmed yet
+// Payment still pending
 return res.json({
 success: false,
 message: 'Payment not confirmed yet.',
+order: order
+});
+}
+} catch (flutterwaveError) {
+console.error(`❌ Flutterwave API error for ${tx_ref}:`, flutterwaveError.message);
+
+// If we can't reach Flutterwave, keep order as pending
+return res.json({
+success: false,
+message: 'Payment verification in progress.',
 order: order
 });
 }
@@ -1817,9 +1920,9 @@ return res.status(401).send('Invalid signature');
 const event = req.body;
 console.log(`📥 Webhook received: ${event.event}`);
 
-if (event.event === 'charge.completed' && event.data.status === 'successful') {
+if (event.event === 'charge.completed') {
 const tx_ref = event.data.tx_ref;
-console.log(`✅ Payment successful for TX: ${tx_ref}`);
+console.log(`✅ Payment webhook for TX: ${tx_ref}, Status: ${event.data.status}`);
 
 const order = orders[tx_ref];
 
@@ -1828,13 +1931,14 @@ console.log(`❌ Order not found: ${tx_ref}`);
 return res.status(404).send('Order not found');
 }
 
-console.log(`📊 Processing order: ${tx_ref}`);
+if (event.data.status === 'successful') {
+console.log(`💰 Payment successful for ${tx_ref}. Processing order...`);
 
 // 🔥 PROCESS THE ORDER AUTOMATICALLY!
 const result = await processSuccessfulOrder(order, event.data);
 
 if (result.success) {
-console.log(`✅ Order ${tx_ref} completed successfully!`);
+console.log(`✅ Order ${tx_ref} completed successfully via webhook!`);
 await sendTelegramAlert(
 `✅ *ORDER COMPLETED!*\n\n` +
 `Ref: #${tx_ref}\n` +
@@ -1844,8 +1948,25 @@ await sendTelegramAlert(
 `Crypto sent to customer! 🎉`
 );
 } else {
-console.log(`❌ Order ${tx_ref} failed: ${result.error}`);
+console.log(`❌ Order ${tx_ref} failed via webhook: ${result.error}`);
 await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${tx_ref}\nError: ${result.error}`);
+}
+} else if (event.data.status === 'failed') {
+// Payment failed
+order.status = 'failed';
+order.failureReason = 'Flutterwave payment failed';
+order.failedAt = new Date().toISOString();
+console.log(`❌ Payment failed for ${tx_ref}`);
+
+await sendTelegramAlert(`❌ *ORDER FAILED*\n\nRef: #${tx_ref}\nReason: Payment failed`);
+
+// Auto-cleanup after 1 hour
+setTimeout(() => {
+if (orders[tx_ref] && orders[tx_ref].status === 'failed') {
+console.log(`🧹 Auto-cleaning failed order: ${tx_ref}`);
+delete orders[tx_ref];
+}
+}, 3600000);
 }
 
 return res.status(200).send('Webhook processed');
@@ -1861,6 +1982,18 @@ res.status(500).send('Webhook error');
 // ============================================================
 // 📌 ADMIN ENDPOINTS
 // ============================================================
+app.get('/api/admin/orders', async (req, res) => {
+try {
+const orderList = Object.keys(orders).map(key => ({
+tx_ref: key,
+...orders[key]
+}));
+res.json({ success: true, orders: orderList, count: orderList.length });
+} catch (error) {
+res.status(500).json({ error: error.message });
+}
+});
+
 app.get('/api/admin/status', async (req, res) => {
 try {
 res.json({
@@ -2000,6 +2133,25 @@ console.error(`❌ Error checking ${coin}:`, error.message);
 }
 }
 
+// Auto-cleanup: Remove orders older than 24 hours (completed) or 1 hour (failed)
+const now = Date.now();
+for (const [key, order] of Object.entries(orders)) {
+try {
+const createdAt = new Date(order.createdAt).getTime();
+const age = now - createdAt;
+
+if (order.status === 'completed' && age > 86400000) { // 24 hours
+console.log(`🧹 Auto-cleaning old completed order: ${key}`);
+delete orders[key];
+} else if (order.status === 'failed' && age > 3600000) { // 1 hour
+console.log(`🧹 Auto-cleaning old failed order: ${key}`);
+delete orders[key];
+}
+} catch (error) {
+console.error(`❌ Error cleaning order ${key}:`, error.message);
+}
+}
+
 if (new Date().getHours() === 0) {
 await sendTelegramAlert(`📊 *DAILY SYSTEM REPORT*\n\n${new Date().toLocaleDateString()}\n\nAll systems monitored. ${EMERGENCY_PAUSED ? '⚠️ System is PAUSED' : '✅ System is RUNNING'}`);
 }
@@ -2028,7 +2180,8 @@ console.log(`📍 Check balance: http://localhost:${PORT}/api/check-balance`);
 console.log(`📍 Verify payment: http://localhost:${PORT}/api/verify-payment`);
 console.log(`📍 Webhook: http://localhost:${PORT}/api/flutterwave-webhook`);
 console.log(`📍 Telegram Webhook: http://localhost:${PORT}/api/telegram-webhook`);
-console.log(`📍 Admin Status: http://localhost:${PORT}/api/admin/status\n`);
+console.log(`📍 Admin Status: http://localhost:${PORT}/api/admin/status`);
+console.log(`📍 Admin Orders: http://localhost:${PORT}/api/admin/orders\n`);
 });
 
 module.exports = app;
