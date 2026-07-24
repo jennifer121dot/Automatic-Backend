@@ -19,7 +19,7 @@ app.use(cors());
 app.use(express.json());
 
 // ============================================================
-// 🔥 CONFIGURATION
+// 🔥 CONFIGURATION - ALL FROM ENVIRONMENT VARIABLES
 // ============================================================
 const FLUTTERWAVE_SECRET = process.env.FLUTTERWAVE_SECRET;
 const FLUTTERWAVE_WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
@@ -27,7 +27,6 @@ const BACKEND_URL = process.env.BACKEND_URL || 'https://automatic-backend.onrend
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://dubpaydub.netlify.app';
 
 const INFURA_KEY = process.env.INFURA_KEY;
-const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
 
 const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 const BSC_RPC = 'https://bsc-dataseed.binance.org/';
@@ -35,9 +34,16 @@ const AVALANCHE_RPC = 'https://api.avax.network/ext/bc/C/rpc';
 const TRON_RPC = 'https://api.trongrid.io';
 const ETH_RPC = `https://mainnet.infura.io/v3/${INFURA_KEY}`;
 
-// Telegram Bot Configuration
-const BOT_TOKEN = process.env.BOT_TOKEN || '8755843049:AAGRwwwVujILqasqxnS7RMEtdGo0zrkFQ-U';
-const CHAT_ID = process.env.CHAT_ID || '8288988788';
+// ============================================================
+// 🔥 TELEGRAM BOT - FROM ENVIRONMENT VARIABLES (NO HARDCODING!)
+// ============================================================
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
+
+// Check if Telegram variables are set
+if (!BOT_TOKEN || !CHAT_ID) {
+console.warn('⚠️ BOT_TOKEN and CHAT_ID not set in environment variables. Telegram features will be disabled.');
+}
 
 // ============================================================
 // 🔥 ORDER STORAGE (Use database in production)
@@ -45,7 +51,7 @@ const CHAT_ID = process.env.CHAT_ID || '8288988788';
 const orders = {};
 
 // ============================================================
-// 🔥 WALLET CONFIGURATION - CHECK ALL KEYS
+// 🔥 WALLET CONFIGURATION - ALL FROM ENVIRONMENT VARIABLES
 // ============================================================
 console.log('🔍 Checking environment variables...');
 
@@ -381,6 +387,12 @@ return true;
 
 // Function to send pause control keyboard
 async function sendPauseControlKeyboard() {
+// Check if Telegram is configured
+if (!BOT_TOKEN || !CHAT_ID) {
+console.warn('⚠️ Telegram not configured - skipping keyboard send');
+return;
+}
+
 const status = EMERGENCY_PAUSED ? '⛔ PAUSED' : '✅ RUNNING';
 const statusColor = EMERGENCY_PAUSED ? '🔴' : '🟢';
 
@@ -416,6 +428,12 @@ console.error('❌ Failed to send pause control:', error.message);
 
 // Function to send alert message
 async function sendTelegramAlert(message) {
+// Check if Telegram is configured
+if (!BOT_TOKEN || !CHAT_ID) {
+console.warn('⚠️ Telegram not configured - skipping alert');
+return;
+}
+
 try {
 await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
 method: 'POST',
@@ -433,13 +451,29 @@ console.error('❌ Failed to send alert:', error.message);
 
 // Telegram webhook endpoint
 app.post('/api/telegram-webhook', async (req, res) => {
+// Always respond with 200 OK to Telegram immediately
+res.status(200).send('OK');
+
+// Process the update in the background (don't wait)
 try {
 const update = req.body;
+console.log('📥 Telegram webhook received:', JSON.stringify(update, null, 2));
 
+// Handle callback queries (button clicks)
 if (update.callback_query) {
 const callbackData = update.callback_query.data;
 const chatId = update.callback_query.message.chat.id;
+const callbackQueryId = update.callback_query.id;
 
+console.log(`🔘 Button clicked: ${callbackData} from chat ${chatId}`);
+
+// Check if Telegram is configured
+if (!BOT_TOKEN || !CHAT_ID) {
+console.warn('⚠️ Telegram not configured - cannot process callback');
+return;
+}
+
+// Check if it's our chat
 if (chatId.toString() === CHAT_ID) {
 let responseText = '';
 let showAlert = false;
@@ -450,9 +484,10 @@ responseText = '⚠️ System is already paused!';
 } else {
 EMERGENCY_PAUSED = true;
 PAUSE_REASON = 'Emergency pause via Telegram';
-responseText = '⏸️ *SYSTEM PAUSED!*\n\nAll orders have been stopped.\nClick "RESUME ORDERS" to restart.';
+responseText = '⏸️ SYSTEM PAUSED! All orders stopped.';
 showAlert = true;
 console.log('🚨 Emergency pause activated via Telegram');
+// Send separate notification
 await sendTelegramAlert('🚨 *EMERGENCY PAUSE ACTIVATED*\n\nAll orders have been stopped.');
 }
 } else if (callbackData === 'resume_orders') {
@@ -461,20 +496,16 @@ responseText = '⚠️ System is already running!';
 } else {
 EMERGENCY_PAUSED = false;
 PAUSE_REASON = '';
-responseText = '▶️ *SYSTEM RESUMED!*\n\nAll orders can now be processed again.';
+responseText = '▶️ SYSTEM RESUMED! All orders active.';
 showAlert = true;
 console.log('✅ System resumed via Telegram');
 await sendTelegramAlert('✅ *SYSTEM RESUMED*\n\nAll orders are now active.');
 }
 } else if (callbackData === 'check_status') {
 const status = EMERGENCY_PAUSED ? '⛔ PAUSED' : '✅ RUNNING';
-responseText = `${EMERGENCY_PAUSED ? '🔴' : '🟢'} *System Status: ${status}*\n\n` +
-`📅 ${new Date().toLocaleString()}\n` +
-(EMERGENCY_PAUSED ? `📝 Reason: ${PAUSE_REASON}\n` : '') +
-`\nAll systems ${EMERGENCY_PAUSED ? 'are stopped' : 'are operational'}.`;
+responseText = `${EMERGENCY_PAUSED ? '🔴' : '🟢'} *System Status: ${status}*\n\n📅 ${new Date().toLocaleString()}\n${EMERGENCY_PAUSED ? `📝 Reason: ${PAUSE_REASON}\n` : ''}\nAll systems ${EMERGENCY_PAUSED ? 'are stopped' : 'are operational'}.`;
 } else if (callbackData === 'check_wallets') {
 let walletInfo = '💰 *WALLET BALANCES*\n\n';
-
 for (const coin of SUPPORTED_COINS) {
 try {
 const balance = await getWalletBalance(coin);
@@ -485,31 +516,46 @@ walletInfo += `• ${coin}: ${balance.toFixed(4)} ($${balanceUSD.toFixed(2)})\n`
 walletInfo += `• ${coin}: ⚠️ Error fetching\n`;
 }
 }
-
 walletInfo += `\n📅 ${new Date().toLocaleString()}`;
 responseText = walletInfo;
 }
 
-// Answer the callback
+// Answer the callback query
+try {
 await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
 method: 'POST',
 headers: { 'Content-Type': 'application/json' },
 body: JSON.stringify({
-callback_query_id: update.callback_query.id,
+callback_query_id: callbackQueryId,
 text: responseText.replace(/\*/g, '').substring(0, 200),
 show_alert: showAlert
 })
 });
+} catch (error) {
+console.error('❌ Failed to answer callback:', error.message);
+}
 
 // Send updated keyboard
 await sendPauseControlKeyboard();
-}
-}
-
-res.status(200).send('OK');
+} else {
+// Unauthorized chat - answer with error
+try {
+await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+callback_query_id: callbackQueryId,
+text: '❌ Unauthorized',
+show_alert: true
+})
+});
 } catch (error) {
-console.error('❌ Telegram webhook error:', error.message);
-res.status(500).send('Error');
+console.error('❌ Failed to answer unauthorized callback:', error.message);
+}
+}
+}
+} catch (error) {
+console.error('❌ Telegram webhook processing error:', error.message);
 }
 });
 
@@ -560,10 +606,14 @@ await sendTelegramAlert(`📊 *DAILY SYSTEM REPORT*\n\n${new Date().toLocaleDate
 
 }, 60 * 60 * 1000); // Every hour
 
-// Send initial control keyboard on startup
+// Send initial control keyboard on startup (only if Telegram is configured)
 setTimeout(async () => {
+if (BOT_TOKEN && CHAT_ID) {
 await sendPauseControlKeyboard();
 console.log('✅ Telegram control keyboard sent');
+} else {
+console.log('⚠️ Telegram not configured - keyboard not sent');
+}
 }, 5000);
 
 // ============================================================
