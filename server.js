@@ -9,7 +9,6 @@ const bitcoin = require('bitcoinjs-lib');
 const { ECPairFactory } = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const TronWeb = require('tronweb');
-const { RippleAPI } = require('ripple-lib');
 const bs58 = require('bs58');
 const app = express();
 
@@ -34,6 +33,10 @@ const BSC_RPC = 'https://bsc-dataseed.binance.org/';
 const AVALANCHE_RPC = 'https://api.avax.network/ext/bc/C/rpc';
 const TRON_RPC = 'https://api.trongrid.io';
 const ETH_RPC = `https://mainnet.infura.io/v3/${INFURA_KEY}`;
+const POLYGON_RPC = 'https://polygon-rpc.com';
+const ARBITRUM_RPC = 'https://arb1.arbitrum.io/rpc';
+const OPTIMISM_RPC = 'https://mainnet.optimism.io';
+const FANTOM_RPC = 'https://rpc.ftm.tools';
 
 // ============================================================
 // 🔥 ORDER STORAGE (Use database in production)
@@ -41,7 +44,7 @@ const ETH_RPC = `https://mainnet.infura.io/v3/${INFURA_KEY}`;
 const orders = {};
 
 // ============================================================
-// 🔥 WALLET CONFIGURATION - CHECK ALL KEYS
+// 🔥 WALLET CONFIGURATION - ALL WORKING COINS
 // ============================================================
 console.log('🔍 Checking environment variables...');
 
@@ -71,25 +74,30 @@ const WALLETS = {
         privateKey: process.env.TRX_PRIVATE_KEY || '',
         network: 'tron'
     },
-    XRP: {
-        address: process.env.XRP_ADDRESS || '',
-        privateKey: process.env.XRP_PRIVATE_KEY || '',
-        network: 'ripple'
-    },
-    LTC: {
-        address: process.env.LTC_ADDRESS || '',
-        privateKey: process.env.LTC_PRIVATE_KEY || '',
-        network: 'litecoin'
-    },
     AVAX: {
         address: process.env.AVAX_ADDRESS || '',
         privateKey: process.env.AVAX_PRIVATE_KEY || '',
         network: 'avalanche'
     },
-    LINK: {
-        address: process.env.LINK_ADDRESS || '',
-        privateKey: process.env.LINK_PRIVATE_KEY || process.env.ETH_PRIVATE_KEY || '',
-        network: 'ethereum'
+    MATIC: {
+        address: process.env.MATIC_ADDRESS || process.env.ETH_ADDRESS || '',
+        privateKey: process.env.MATIC_PRIVATE_KEY || process.env.ETH_PRIVATE_KEY || '',
+        network: 'polygon'
+    },
+    ARB: {
+        address: process.env.ARB_ADDRESS || process.env.ETH_ADDRESS || '',
+        privateKey: process.env.ARB_PRIVATE_KEY || process.env.ETH_PRIVATE_KEY || '',
+        network: 'arbitrum'
+    },
+    OP: {
+        address: process.env.OP_ADDRESS || process.env.ETH_ADDRESS || '',
+        privateKey: process.env.OP_PRIVATE_KEY || process.env.ETH_PRIVATE_KEY || '',
+        network: 'optimism'
+    },
+    FTM: {
+        address: process.env.FTM_ADDRESS || process.env.ETH_ADDRESS || '',
+        privateKey: process.env.FTM_PRIVATE_KEY || process.env.ETH_PRIVATE_KEY || '',
+        network: 'fantom'
     }
 };
 
@@ -104,7 +112,7 @@ Object.keys(WALLETS).forEach(coin => {
 });
 
 // ============================================================
-// 🔥 COIN TO WALLET MAPPING
+// 🔥 COIN TO WALLET MAPPING - REMOVED LTC, XRP, LINK
 // ============================================================
 const COIN_TO_WALLET = {
     'BTC': 'BTC',
@@ -122,10 +130,11 @@ const COIN_TO_WALLET = {
     },
     'BNB': 'BNB',
     'SOL': 'SOL',
-    'XRP': 'XRP',
-    'LTC': 'LTC',
     'AVAX': 'AVAX',
-    'LINK': 'LINK'
+    'MATIC': 'MATIC',
+    'ARB': 'ARB',
+    'OP': 'OP',
+    'FTM': 'FTM'
 };
 
 // ============================================================
@@ -208,19 +217,19 @@ function parsePrivateKey(privateKeyInput, coinName) {
         }
     } catch (e) { /* Not Hex */ }
     
-    // FORMAT 5: WIF (Bitcoin, Litecoin) - return as string
+    // FORMAT 5: WIF (Bitcoin) - return as string
     if (input.startsWith('5') || input.startsWith('K') || input.startsWith('L') || input.startsWith('T')) {
         console.log(`✅ ${coinName}: Using WIF format`);
         return input;
     }
     
-    // FORMAT 6: Raw string (for TRON, XRP, etc.)
+    // FORMAT 6: Raw string (for TRON, etc.)
     console.log(`✅ ${coinName}: Using raw string format`);
     return input;
 }
 
 // ============================================================
-// 🔥 REAL BALANCE CHECKS
+// 🔥 REAL BALANCE CHECKS - ALL WORKING COINS
 // ============================================================
 async function getWalletBalance(coinSymbol, network) {
     console.log(`🔍 Checking balance for ${coinSymbol}...`);
@@ -236,13 +245,11 @@ async function getWalletBalance(coinSymbol, network) {
         
         if (coinSymbol === 'BTC') {
             try {
-                // Try mempool.space first
                 const response = await axios.get(`https://mempool.space/api/address/${address}`);
                 const balance = response.data.chain_stats.funded_txo_sum / 100000000;
                 console.log(`💰 BTC Balance: ${balance} BTC`);
                 return balance;
             } catch {
-                // Fallback to blockchain.info
                 const response = await axios.get(`https://blockchain.info/q/addressbalance/${address}`);
                 const balance = response.data / 100000000;
                 console.log(`💰 BTC Balance: ${balance} BTC`);
@@ -250,39 +257,10 @@ async function getWalletBalance(coinSymbol, network) {
             }
         }
         
-        if (coinSymbol === 'LTC') {
-            const response = await axios.get(`https://api.blockchair.com/litecoin/dashboards/address/${address}`);
-            const data = response.data.data[address];
-            if (data && data.address && data.address.balance) {
-                return data.address.balance / 100000000;
-            }
-            return 0;
-        }
-        
-        if (coinSymbol === 'XRP') {
-            const response = await axios.post('https://s1.ripple.com:51234/', {
-                method: 'account_info',
-                params: [{ account: address, strict: true, ledger_index: 'current', queue: true }]
-            });
-            if (response.data.result && response.data.result.account_data) {
-                return response.data.result.account_data.Balance / 1000000;
-            }
-            return 0;
-        }
-        
         if (coinSymbol === 'ETH') {
             const provider = new ethers.JsonRpcProvider(ETH_RPC);
             const balance = await provider.getBalance(address);
             return parseFloat(ethers.formatEther(balance));
-        }
-        
-        if (coinSymbol === 'LINK') {
-            const provider = new ethers.JsonRpcProvider(ETH_RPC);
-            const contractAddress = '0x514910771AF9Ca656af840dff83E8264EcF986CA';
-            const abi = ['function balanceOf(address) view returns (uint256)'];
-            const contract = new ethers.Contract(contractAddress, abi, provider);
-            const balance = await contract.balanceOf(address);
-            return parseFloat(ethers.formatUnits(balance, 18));
         }
         
         if (coinSymbol === 'SOL') {
@@ -327,6 +305,43 @@ async function getWalletBalance(coinSymbol, network) {
             return parseFloat(ethers.formatEther(balance));
         }
         
+        if (coinSymbol === 'MATIC') {
+            const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
+            const balance = await provider.getBalance(address);
+            return parseFloat(ethers.formatEther(balance));
+        }
+        
+        if (coinSymbol === 'ARB') {
+            const provider = new ethers.JsonRpcProvider(ARBITRUM_RPC);
+            const balance = await provider.getBalance(address);
+            return parseFloat(ethers.formatEther(balance));
+        }
+        
+        if (coinSymbol === 'OP') {
+            const provider = new ethers.JsonRpcProvider(OPTIMISM_RPC);
+            const balance = await provider.getBalance(address);
+            return parseFloat(ethers.formatEther(balance));
+        }
+        
+        if (coinSymbol === 'FTM') {
+            const provider = new ethers.JsonRpcProvider(FANTOM_RPC);
+            const balance = await provider.getBalance(address);
+            return parseFloat(ethers.formatEther(balance));
+        }
+        
+        if (coinSymbol === 'TRX') {
+            try {
+                const tronWeb = new TronWeb({
+                    fullHost: TRON_RPC,
+                    privateKey: wallet.privateKey
+                });
+                const balance = await tronWeb.trx.getBalance(address);
+                return balance / 1000000;
+            } catch {
+                return 0;
+            }
+        }
+        
         if (coinSymbol === 'USDT' && network === 'TRC20') {
             try {
                 const tronWeb = new TronWeb({
@@ -350,18 +365,161 @@ async function getWalletBalance(coinSymbol, network) {
 }
 
 // ============================================================
-// 🔥 REAL SENDING FUNCTIONS - ALL WITH FLEXIBLE KEY PARSING
+// 🔥 SEND FUNCTIONS FOR NEW COINS (MATIC, ARB, OP, FTM, TRX)
 // ============================================================
 
+// 📌 SEND MATIC (Polygon)
+async function sendMATIC(privateKeyInput, toAddress, amountMATIC) {
+    try {
+        const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
+        const wallet = new ethers.Wallet(privateKey, provider);
+        const feeData = await provider.getFeeData();
+        const tx = await wallet.sendTransaction({
+            to: toAddress,
+            value: ethers.parseEther(amountMATIC.toString()),
+            gasLimit: 21000,
+            gasPrice: feeData.gasPrice || feeData.gasPrice
+        });
+        await tx.wait();
+        return tx.hash;
+    } catch (error) {
+        console.error('❌ MATIC send error:', error.message);
+        throw error;
+    }
+}
+
+// 📌 SEND ARB (Arbitrum)
+async function sendARB(privateKeyInput, toAddress, amountARB) {
+    try {
+        const provider = new ethers.JsonRpcProvider(ARBITRUM_RPC);
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
+        const wallet = new ethers.Wallet(privateKey, provider);
+        const feeData = await provider.getFeeData();
+        const tx = await wallet.sendTransaction({
+            to: toAddress,
+            value: ethers.parseEther(amountARB.toString()),
+            gasLimit: 21000,
+            gasPrice: feeData.gasPrice || feeData.gasPrice
+        });
+        await tx.wait();
+        return tx.hash;
+    } catch (error) {
+        console.error('❌ ARB send error:', error.message);
+        throw error;
+    }
+}
+
+// 📌 SEND OP (Optimism)
+async function sendOP(privateKeyInput, toAddress, amountOP) {
+    try {
+        const provider = new ethers.JsonRpcProvider(OPTIMISM_RPC);
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
+        const wallet = new ethers.Wallet(privateKey, provider);
+        const feeData = await provider.getFeeData();
+        const tx = await wallet.sendTransaction({
+            to: toAddress,
+            value: ethers.parseEther(amountOP.toString()),
+            gasLimit: 21000,
+            gasPrice: feeData.gasPrice || feeData.gasPrice
+        });
+        await tx.wait();
+        return tx.hash;
+    } catch (error) {
+        console.error('❌ OP send error:', error.message);
+        throw error;
+    }
+}
+
+// 📌 SEND FTM (Fantom)
+async function sendFTM(privateKeyInput, toAddress, amountFTM) {
+    try {
+        const provider = new ethers.JsonRpcProvider(FANTOM_RPC);
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
+        const wallet = new ethers.Wallet(privateKey, provider);
+        const feeData = await provider.getFeeData();
+        const tx = await wallet.sendTransaction({
+            to: toAddress,
+            value: ethers.parseEther(amountFTM.toString()),
+            gasLimit: 21000,
+            gasPrice: feeData.gasPrice || feeData.gasPrice
+        });
+        await tx.wait();
+        return tx.hash;
+    } catch (error) {
+        console.error('❌ FTM send error:', error.message);
+        throw error;
+    }
+}
+
+// 📌 SEND TRX (Tron)
+async function sendTRX(privateKeyInput, toAddress, amountTRX) {
+    try {
+        let privateKey = privateKeyInput;
+        if (privateKeyInput instanceof Uint8Array) {
+            privateKey = Buffer.from(privateKeyInput).toString('hex');
+        } else if (Buffer.isBuffer(privateKeyInput)) {
+            privateKey = privateKeyInput.toString('hex');
+        } else if (typeof privateKeyInput === 'string') {
+            if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
+                try {
+                    const decoded = bs58.decode(privateKeyInput);
+                    if (decoded.length === 32) {
+                        privateKey = Buffer.from(decoded).toString('hex');
+                    }
+                } catch (e) { /* Not base58 */ }
+            }
+        }
+        
+        const tronWeb = new TronWeb({
+            fullHost: TRON_RPC,
+            privateKey: privateKey
+        });
+        
+        const amount = amountTRX * 1000000;
+        const result = await tronWeb.trx.sendTransaction(toAddress, amount);
+        if (result.result) {
+            return result.transaction.txID;
+        } else {
+            throw new Error('TRX send failed');
+        }
+    } catch (error) {
+        console.error('❌ TRX send error:', error.message);
+        throw error;
+    }
+}
+
+// Helper: Parse EVM private key
+function parseEVMPrivateKey(privateKeyInput) {
+    let privateKey = privateKeyInput;
+    if (privateKeyInput instanceof Uint8Array) {
+        privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
+    } else if (Buffer.isBuffer(privateKeyInput)) {
+        privateKey = '0x' + privateKeyInput.toString('hex');
+    } else if (typeof privateKeyInput === 'string') {
+        if (!privateKeyInput.startsWith('0x') && /^[0-9a-f]{64}$/i.test(privateKeyInput)) {
+            privateKey = '0x' + privateKeyInput;
+        }
+        if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
+            try {
+                const decoded = bs58.decode(privateKeyInput);
+                if (decoded.length === 32) {
+                    privateKey = '0x' + Buffer.from(decoded).toString('hex');
+                }
+            } catch (e) { /* Not base58 */ }
+        }
+    }
+    return privateKey;
+}
+
 // ============================================================
-// 📌 SEND BTC (REAL) - IMPROVED WITH DYNAMIC FEES
+// 📌 SEND BTC (REAL)
 // ============================================================
 async function sendBTC(privateKeyInput, toAddress, amountBTC) {
     try {
         const wallet = getWalletForCoin('BTC');
         console.log(`📤 Sending ${amountBTC} BTC from ${wallet.address} to ${toAddress}`);
         
-        // Get UTXOs from mempool.space
         let utxos;
         try {
             const response = await axios.get(`https://mempool.space/api/address/${wallet.address}/utxo`);
@@ -382,16 +540,10 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         }
         
         const satoshisNeeded = Math.round(amountBTC * 100000000);
-        
-        // Calculate total available
         const totalAvailable = utxos.reduce((sum, utxo) => sum + utxo.value, 0);
         console.log(`💰 Total available: ${totalAvailable} sats (${(totalAvailable/100000000).toFixed(8)} BTC)`);
-        console.log(`💰 Needed: ${satoshisNeeded} sats (${amountBTC} BTC)`);
         
-        // Estimate fee (dynamic based on UTXO count)
         const estimatedFee = Math.min(25000, Math.round(utxos.length * 2500 + 5000));
-        console.log(`💰 Estimated fee: ${estimatedFee} sats`);
-        
         const totalNeeded = satoshisNeeded + estimatedFee;
         
         if (totalAvailable < totalNeeded) {
@@ -399,15 +551,12 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
             throw new Error(
                 `Insufficient funds! Have ${totalAvailable} sats (${(totalAvailable/100000000).toFixed(8)} BTC), ` +
                 `Need ${totalNeeded} sats (${(totalNeeded/100000000).toFixed(8)} BTC) including fee. ` +
-                `Shortage: ${shortage} sats (${(shortage/100000000).toFixed(8)} BTC). ` +
-                `Please fund your wallet or try a smaller amount.`
+                `Shortage: ${shortage} sats (${(shortage/100000000).toFixed(8)} BTC).`
             );
         }
         
-        // Select UTXOs
         let selectedUTXOs = [];
         let totalSats = 0;
-        
         for (const utxo of utxos) {
             if (totalSats < totalNeeded) {
                 selectedUTXOs.push(utxo);
@@ -455,7 +604,6 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
             value: satoshisNeeded
         });
         
-        // Calculate actual fee and change
         const fee = Math.min(estimatedFee, totalSats - satoshisNeeded - 1000);
         const change = totalSats - satoshisNeeded - fee;
         
@@ -465,8 +613,6 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
                 value: change
             });
             console.log(`💰 Change: ${change} sats sent back to wallet`);
-        } else {
-            console.log(`💰 No significant change (${change} sats)`);
         }
         
         console.log(`💰 Actual fee: ${fee} sats`);
@@ -479,7 +625,6 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         const tx = psbt.extractTransaction();
         const txHex = tx.toHex();
         
-        // Broadcast using mempool.space
         let broadcastResponse;
         try {
             broadcastResponse = await axios.post('https://mempool.space/api/tx', txHex);
@@ -492,50 +637,25 @@ async function sendBTC(privateKeyInput, toAddress, amountBTC) {
         return broadcastResponse.data;
     } catch (error) {
         console.error('❌ BTC send error:', error.message);
-        if (error.response) {
-            console.error('Response data:', error.response.data);
-            console.error('Response status:', error.response.status);
-        }
         throw error;
     }
 }
 
 // ============================================================
-// 📌 SEND ETH (REAL) - ACCEPTS HEX, BASE64, JSON ARRAY
+// 📌 SEND ETH (REAL)
 // ============================================================
 async function sendETH(privateKeyInput, toAddress, amountETH) {
     try {
         const provider = new ethers.JsonRpcProvider(ETH_RPC);
-        
-        let privateKey = privateKeyInput;
-        if (privateKeyInput instanceof Uint8Array) {
-            privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
-        } else if (Buffer.isBuffer(privateKeyInput)) {
-            privateKey = '0x' + privateKeyInput.toString('hex');
-        } else if (typeof privateKeyInput === 'string') {
-            if (!privateKeyInput.startsWith('0x') && /^[0-9a-f]{64}$/i.test(privateKeyInput)) {
-                privateKey = '0x' + privateKeyInput;
-            }
-            if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
-                try {
-                    const decoded = bs58.decode(privateKeyInput);
-                    if (decoded.length === 32) {
-                        privateKey = '0x' + Buffer.from(decoded).toString('hex');
-                    }
-                } catch (e) { /* Not base58 */ }
-            }
-        }
-        
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
         const wallet = new ethers.Wallet(privateKey, provider);
         const feeData = await provider.getFeeData();
-        
         const tx = await wallet.sendTransaction({
             to: toAddress,
             value: ethers.parseEther(amountETH.toString()),
             gasLimit: 21000,
             gasPrice: feeData.gasPrice || feeData.gasPrice
         });
-        
         await tx.wait();
         return tx.hash;
     } catch (error) {
@@ -545,37 +665,215 @@ async function sendETH(privateKeyInput, toAddress, amountETH) {
 }
 
 // ============================================================
-// 📌 SEND ERC20 TOKEN (REAL) - ACCEPTS ALL FORMATS
+// 📌 SEND SOL (REAL)
+// ============================================================
+async function sendSOL(privateKeyInput, toAddress, amountSOL) {
+    try {
+        console.log(`📤 Sending ${amountSOL} SOL to ${toAddress}`);
+        const connection = new Connection(SOLANA_RPC);
+        let secretKey = parsePrivateKey(privateKeyInput, 'SOL');
+        
+        if (typeof secretKey === 'string') {
+            try {
+                const decoded = bs58.decode(secretKey);
+                if (decoded.length === 64) {
+                    secretKey = Uint8Array.from(decoded);
+                    console.log('✅ SOL: Using Base58 format');
+                }
+            } catch (e) { /* Not base58 */ }
+            if (typeof secretKey === 'string') {
+                try {
+                    const buffer = Buffer.from(secretKey, 'base64');
+                    if (buffer.length === 64) {
+                        secretKey = Uint8Array.from(buffer);
+                        console.log('✅ SOL: Using Base64 format');
+                    }
+                } catch (e) { /* Not base64 */ }
+            }
+            if (typeof secretKey === 'string') {
+                try {
+                    const hexClean = secretKey.replace('0x', '').trim();
+                    if (/^[0-9a-f]{64}$/i.test(hexClean)) {
+                        secretKey = Uint8Array.from(Buffer.from(hexClean, 'hex'));
+                        console.log('✅ SOL: Using Hex format');
+                    }
+                } catch (e) { /* Not hex */ }
+            }
+        }
+        if (typeof secretKey === 'string') {
+            try {
+                const array = JSON.parse(secretKey);
+                if (Array.isArray(array) && array.length === 64) {
+                    secretKey = Uint8Array.from(array);
+                    console.log('✅ SOL: Using JSON array format');
+                }
+            } catch (e) { /* Not JSON */ }
+        }
+        if (!secretKey || secretKey.length !== 64) {
+            throw new Error(`Invalid Solana private key. Length: ${secretKey ? secretKey.length : 'undefined'}, expected 64 bytes`);
+        }
+        
+        const fromKeypair = Keypair.fromSecretKey(secretKey);
+        const toPublicKey = new PublicKey(toAddress);
+        const lamports = Math.round(amountSOL * LAMPORTS_PER_SOL);
+        
+        const transaction = new Transaction().add(
+            SystemProgram.transfer({
+                fromPubkey: fromKeypair.publicKey,
+                toPubkey: toPublicKey,
+                lamports: lamports
+            })
+        );
+        const signature = await connection.sendTransaction(transaction, [fromKeypair]);
+        await connection.confirmTransaction(signature);
+        return signature;
+    } catch (error) {
+        console.error('❌ SOL send error:', error.message);
+        throw error;
+    }
+}
+
+// ============================================================
+// 📌 SEND BNB (REAL)
+// ============================================================
+async function sendBNB(privateKeyInput, toAddress, amountBNB) {
+    try {
+        const provider = new ethers.JsonRpcProvider(BSC_RPC);
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
+        const wallet = new ethers.Wallet(privateKey, provider);
+        const feeData = await provider.getFeeData();
+        const tx = await wallet.sendTransaction({
+            to: toAddress,
+            value: ethers.parseEther(amountBNB.toString()),
+            gasLimit: 21000,
+            gasPrice: feeData.gasPrice || feeData.gasPrice
+        });
+        await tx.wait();
+        return tx.hash;
+    } catch (error) {
+        console.error('❌ BNB send error:', error.message);
+        throw error;
+    }
+}
+
+// ============================================================
+// 📌 SEND AVAX (REAL)
+// ============================================================
+async function sendAVAX(privateKeyInput, toAddress, amountAVAX) {
+    try {
+        const provider = new ethers.JsonRpcProvider(AVALANCHE_RPC);
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
+        const wallet = new ethers.Wallet(privateKey, provider);
+        const feeData = await provider.getFeeData();
+        const tx = await wallet.sendTransaction({
+            to: toAddress,
+            value: ethers.parseEther(amountAVAX.toString()),
+            gasLimit: 21000,
+            gasPrice: feeData.gasPrice || feeData.gasPrice
+        });
+        await tx.wait();
+        return tx.hash;
+    } catch (error) {
+        console.error('❌ AVAX send error:', error.message);
+        throw error;
+    }
+}
+
+// ============================================================
+// 📌 SEND USDC ON SOLANA (REAL)
+// ============================================================
+async function sendUSDCOnSolana(privateKeyInput, toAddress, amountUSDC) {
+    try {
+        const connection = new Connection(SOLANA_RPC);
+        let secretKey = parsePrivateKey(privateKeyInput, 'USDC-SOL');
+        
+        if (typeof secretKey === 'string') {
+            try {
+                const decoded = bs58.decode(secretKey);
+                if (decoded.length === 64) {
+                    secretKey = Uint8Array.from(decoded);
+                    console.log('✅ USDC-SOL: Using Base58 format');
+                }
+            } catch (e) { /* Not base58 */ }
+            if (typeof secretKey === 'string') {
+                try {
+                    const buffer = Buffer.from(secretKey, 'base64');
+                    if (buffer.length === 64) {
+                        secretKey = Uint8Array.from(buffer);
+                        console.log('✅ USDC-SOL: Using Base64 format');
+                    }
+                } catch (e) { /* Not base64 */ }
+            }
+            if (typeof secretKey === 'string') {
+                try {
+                    const hexClean = secretKey.replace('0x', '').trim();
+                    if (/^[0-9a-f]{64}$/i.test(hexClean)) {
+                        secretKey = Uint8Array.from(Buffer.from(hexClean, 'hex'));
+                        console.log('✅ USDC-SOL: Using Hex format');
+                    }
+                } catch (e) { /* Not hex */ }
+            }
+        }
+        if (typeof secretKey === 'string') {
+            try {
+                const array = JSON.parse(secretKey);
+                if (Array.isArray(array) && array.length === 64) {
+                    secretKey = Uint8Array.from(array);
+                    console.log('✅ USDC-SOL: Using JSON array format');
+                }
+            } catch (e) { /* Not JSON */ }
+        }
+        if (!secretKey || secretKey.length !== 64) {
+            throw new Error(`Invalid Solana private key. Length: ${secretKey ? secretKey.length : 'undefined'}, expected 64 bytes`);
+        }
+        
+        const fromKeypair = Keypair.fromSecretKey(secretKey);
+        const TOKEN_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+        const toPublicKey = new PublicKey(toAddress);
+        const fromTokenAccount = await getAssociatedTokenAddress(TOKEN_MINT, fromKeypair.publicKey);
+        const toTokenAccount = await getAssociatedTokenAddress(TOKEN_MINT, toPublicKey);
+        
+        const toAccountInfo = await connection.getAccountInfo(toTokenAccount);
+        const transaction = new Transaction();
+        if (!toAccountInfo) {
+            transaction.add(
+                createAssociatedTokenAccountInstruction(
+                    fromKeypair.publicKey,
+                    toTokenAccount,
+                    toPublicKey,
+                    TOKEN_MINT
+                )
+            );
+        }
+        const amount = Math.round(amountUSDC * 1000000);
+        const transferIx = createTransferInstruction(
+            fromTokenAccount,
+            toTokenAccount,
+            fromKeypair.publicKey,
+            amount
+        );
+        transaction.add(transferIx);
+        const signature = await connection.sendTransaction(transaction, [fromKeypair]);
+        await connection.confirmTransaction(signature);
+        return signature;
+    } catch (error) {
+        console.error('❌ USDC Solana send error:', error.message);
+        throw error;
+    }
+}
+
+// ============================================================
+// 📌 SEND ERC20 TOKEN (REAL)
 // ============================================================
 async function sendERC20(privateKeyInput, toAddress, amount, contractAddress, decimals = 6) {
     try {
         const provider = new ethers.JsonRpcProvider(ETH_RPC);
-        
-        let privateKey = privateKeyInput;
-        if (privateKeyInput instanceof Uint8Array) {
-            privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
-        } else if (Buffer.isBuffer(privateKeyInput)) {
-            privateKey = '0x' + privateKeyInput.toString('hex');
-        } else if (typeof privateKeyInput === 'string') {
-            if (!privateKeyInput.startsWith('0x') && /^[0-9a-f]{64}$/i.test(privateKeyInput)) {
-                privateKey = '0x' + privateKeyInput;
-            }
-            if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
-                try {
-                    const decoded = bs58.decode(privateKeyInput);
-                    if (decoded.length === 32) {
-                        privateKey = '0x' + Buffer.from(decoded).toString('hex');
-                    }
-                } catch (e) { /* Not base58 */ }
-            }
-        }
-        
+        let privateKey = parseEVMPrivateKey(privateKeyInput);
         const wallet = new ethers.Wallet(privateKey, provider);
         const abi = ['function transfer(address to, uint256 amount) returns (bool)'];
         const contract = new ethers.Contract(contractAddress, abi, wallet);
         const amountUnits = ethers.parseUnits(amount.toString(), decimals);
         const feeData = await provider.getFeeData();
-        
         const tx = await contract.transfer(toAddress, amountUnits, {
             gasLimit: 100000,
             gasPrice: feeData.gasPrice || feeData.gasPrice
@@ -589,266 +887,7 @@ async function sendERC20(privateKeyInput, toAddress, amount, contractAddress, de
 }
 
 // ============================================================
-// 📌 SEND SOL (REAL) - ACCEPTS ALL FORMATS (Base58, JSON, Base64, Hex)
-// ============================================================
-async function sendSOL(privateKeyInput, toAddress, amountSOL) {
-    try {
-        console.log(`📤 Sending ${amountSOL} SOL to ${toAddress}`);
-        
-        const connection = new Connection(SOLANA_RPC);
-        
-        let secretKey = parsePrivateKey(privateKeyInput, 'SOL');
-        
-        if (typeof secretKey === 'string') {
-            try {
-                const decoded = bs58.decode(secretKey);
-                if (decoded.length === 64) {
-                    secretKey = Uint8Array.from(decoded);
-                    console.log('✅ SOL: Using Base58 format');
-                }
-            } catch (e) { /* Not base58 */ }
-            
-            if (typeof secretKey === 'string') {
-                try {
-                    const buffer = Buffer.from(secretKey, 'base64');
-                    if (buffer.length === 64) {
-                        secretKey = Uint8Array.from(buffer);
-                        console.log('✅ SOL: Using Base64 format');
-                    }
-                } catch (e) { /* Not base64 */ }
-            }
-            
-            if (typeof secretKey === 'string') {
-                try {
-                    const hexClean = secretKey.replace('0x', '').trim();
-                    if (/^[0-9a-f]{64}$/i.test(hexClean)) {
-                        secretKey = Uint8Array.from(Buffer.from(hexClean, 'hex'));
-                        console.log('✅ SOL: Using Hex format');
-                    }
-                } catch (e) { /* Not hex */ }
-            }
-        }
-        
-        if (typeof secretKey === 'string') {
-            try {
-                const array = JSON.parse(secretKey);
-                if (Array.isArray(array) && array.length === 64) {
-                    secretKey = Uint8Array.from(array);
-                    console.log('✅ SOL: Using JSON array format');
-                }
-            } catch (e) { /* Not JSON */ }
-        }
-        
-        if (!secretKey || secretKey.length !== 64) {
-            throw new Error(`Invalid Solana private key. Length: ${secretKey ? secretKey.length : 'undefined'}, expected 64 bytes`);
-        }
-        
-        const fromKeypair = Keypair.fromSecretKey(secretKey);
-        const toPublicKey = new PublicKey(toAddress);
-        const lamports = Math.round(amountSOL * LAMPORTS_PER_SOL);
-        
-        console.log(`🔑 From: ${fromKeypair.publicKey.toString()}`);
-        console.log(`📬 To: ${toPublicKey.toString()}`);
-        console.log(`💰 Lamports: ${lamports}`);
-        
-        const transaction = new Transaction().add(
-            SystemProgram.transfer({
-                fromPubkey: fromKeypair.publicKey,
-                toPubkey: toPublicKey,
-                lamports: lamports
-            })
-        );
-        
-        const signature = await connection.sendTransaction(transaction, [fromKeypair]);
-        await connection.confirmTransaction(signature);
-        return signature;
-    } catch (error) {
-        console.error('❌ SOL send error:', error.message);
-        throw error;
-    }
-}
-
-// ============================================================
-// 📌 SEND USDC ON SOLANA (REAL) - ACCEPTS ALL FORMATS
-// ============================================================
-async function sendUSDCOnSolana(privateKeyInput, toAddress, amountUSDC) {
-    try {
-        const connection = new Connection(SOLANA_RPC);
-        
-        let secretKey = parsePrivateKey(privateKeyInput, 'USDC-SOL');
-        
-        if (typeof secretKey === 'string') {
-            try {
-                const decoded = bs58.decode(secretKey);
-                if (decoded.length === 64) {
-                    secretKey = Uint8Array.from(decoded);
-                    console.log('✅ USDC-SOL: Using Base58 format');
-                }
-            } catch (e) { /* Not base58 */ }
-            
-            if (typeof secretKey === 'string') {
-                try {
-                    const buffer = Buffer.from(secretKey, 'base64');
-                    if (buffer.length === 64) {
-                        secretKey = Uint8Array.from(buffer);
-                        console.log('✅ USDC-SOL: Using Base64 format');
-                    }
-                } catch (e) { /* Not base64 */ }
-            }
-            
-            if (typeof secretKey === 'string') {
-                try {
-                    const hexClean = secretKey.replace('0x', '').trim();
-                    if (/^[0-9a-f]{64}$/i.test(hexClean)) {
-                        secretKey = Uint8Array.from(Buffer.from(hexClean, 'hex'));
-                        console.log('✅ USDC-SOL: Using Hex format');
-                    }
-                } catch (e) { /* Not hex */ }
-            }
-        }
-        
-        if (typeof secretKey === 'string') {
-            try {
-                const array = JSON.parse(secretKey);
-                if (Array.isArray(array) && array.length === 64) {
-                    secretKey = Uint8Array.from(array);
-                    console.log('✅ USDC-SOL: Using JSON array format');
-                }
-            } catch (e) { /* Not JSON */ }
-        }
-        
-        if (!secretKey || secretKey.length !== 64) {
-            throw new Error(`Invalid Solana private key. Length: ${secretKey ? secretKey.length : 'undefined'}, expected 64 bytes`);
-        }
-        
-        const fromKeypair = Keypair.fromSecretKey(secretKey);
-        const TOKEN_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-        const toPublicKey = new PublicKey(toAddress);
-        const fromTokenAccount = await getAssociatedTokenAddress(TOKEN_MINT, fromKeypair.publicKey);
-        const toTokenAccount = await getAssociatedTokenAddress(TOKEN_MINT, toPublicKey);
-        
-        const toAccountInfo = await connection.getAccountInfo(toTokenAccount);
-        const transaction = new Transaction();
-        
-        if (!toAccountInfo) {
-            transaction.add(
-                createAssociatedTokenAccountInstruction(
-                    fromKeypair.publicKey,
-                    toTokenAccount,
-                    toPublicKey,
-                    TOKEN_MINT
-                )
-            );
-        }
-        
-        const amount = Math.round(amountUSDC * 1000000);
-        const transferIx = createTransferInstruction(
-            fromTokenAccount,
-            toTokenAccount,
-            fromKeypair.publicKey,
-            amount
-        );
-        transaction.add(transferIx);
-        
-        const signature = await connection.sendTransaction(transaction, [fromKeypair]);
-        await connection.confirmTransaction(signature);
-        return signature;
-    } catch (error) {
-        console.error('❌ USDC Solana send error:', error.message);
-        throw error;
-    }
-}
-
-// ============================================================
-// 📌 SEND BNB (REAL) - ACCEPTS ALL FORMATS
-// ============================================================
-async function sendBNB(privateKeyInput, toAddress, amountBNB) {
-    try {
-        const provider = new ethers.JsonRpcProvider(BSC_RPC);
-        
-        let privateKey = privateKeyInput;
-        if (privateKeyInput instanceof Uint8Array) {
-            privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
-        } else if (Buffer.isBuffer(privateKeyInput)) {
-            privateKey = '0x' + privateKeyInput.toString('hex');
-        } else if (typeof privateKeyInput === 'string') {
-            if (!privateKeyInput.startsWith('0x') && /^[0-9a-f]{64}$/i.test(privateKeyInput)) {
-                privateKey = '0x' + privateKeyInput;
-            }
-            if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
-                try {
-                    const decoded = bs58.decode(privateKeyInput);
-                    if (decoded.length === 32) {
-                        privateKey = '0x' + Buffer.from(decoded).toString('hex');
-                    }
-                } catch (e) { /* Not base58 */ }
-            }
-        }
-        
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const feeData = await provider.getFeeData();
-        
-        const tx = await wallet.sendTransaction({
-            to: toAddress,
-            value: ethers.parseEther(amountBNB.toString()),
-            gasLimit: 21000,
-            gasPrice: feeData.gasPrice || feeData.gasPrice
-        });
-        
-        await tx.wait();
-        return tx.hash;
-    } catch (error) {
-        console.error('❌ BNB send error:', error.message);
-        throw error;
-    }
-}
-
-// ============================================================
-// 📌 SEND AVAX (REAL) - ACCEPTS ALL FORMATS
-// ============================================================
-async function sendAVAX(privateKeyInput, toAddress, amountAVAX) {
-    try {
-        const provider = new ethers.JsonRpcProvider(AVALANCHE_RPC);
-        
-        let privateKey = privateKeyInput;
-        if (privateKeyInput instanceof Uint8Array) {
-            privateKey = '0x' + Buffer.from(privateKeyInput).toString('hex');
-        } else if (Buffer.isBuffer(privateKeyInput)) {
-            privateKey = '0x' + privateKeyInput.toString('hex');
-        } else if (typeof privateKeyInput === 'string') {
-            if (!privateKeyInput.startsWith('0x') && /^[0-9a-f]{64}$/i.test(privateKeyInput)) {
-                privateKey = '0x' + privateKeyInput;
-            }
-            if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
-                try {
-                    const decoded = bs58.decode(privateKeyInput);
-                    if (decoded.length === 32) {
-                        privateKey = '0x' + Buffer.from(decoded).toString('hex');
-                    }
-                } catch (e) { /* Not base58 */ }
-            }
-        }
-        
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const feeData = await provider.getFeeData();
-        
-        const tx = await wallet.sendTransaction({
-            to: toAddress,
-            value: ethers.parseEther(amountAVAX.toString()),
-            gasLimit: 21000,
-            gasPrice: feeData.gasPrice || feeData.gasPrice
-        });
-        
-        await tx.wait();
-        return tx.hash;
-    } catch (error) {
-        console.error('❌ AVAX send error:', error.message);
-        throw error;
-    }
-}
-
-// ============================================================
-// 📌 SEND USDT ON TRON (REAL) - ACCEPTS ALL FORMATS
+// 📌 SEND USDT ON TRON (REAL)
 // ============================================================
 async function sendUSDTOnTron(privateKeyInput, toAddress, amountUSDT) {
     try {
@@ -867,151 +906,17 @@ async function sendUSDTOnTron(privateKeyInput, toAddress, amountUSDT) {
                 } catch (e) { /* Not base58 */ }
             }
         }
-        
         const tronWeb = new TronWeb({
             fullHost: TRON_RPC,
             privateKey: privateKey
         });
-        
         const contractAddress = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
         const contract = await tronWeb.contract().at(contractAddress);
         const amount = amountUSDT * 1000000;
-        
         const result = await contract.transfer(toAddress, amount).send();
         return result.transaction_id;
     } catch (error) {
         console.error('❌ USDT TRC20 send error:', error.message);
-        throw error;
-    }
-}
-
-// ============================================================
-// 📌 SEND XRP (REAL) - ACCEPTS ALL FORMATS
-// ============================================================
-async function sendXRP(privateKeyInput, toAddress, amountXRP) {
-    try {
-        const api = new RippleAPI({ server: 'wss://s1.ripple.com' });
-        await api.connect();
-        
-        let privateKey = privateKeyInput;
-        if (privateKeyInput instanceof Uint8Array) {
-            privateKey = Buffer.from(privateKeyInput).toString('hex');
-        } else if (Buffer.isBuffer(privateKeyInput)) {
-            privateKey = privateKeyInput.toString('hex');
-        } else if (typeof privateKeyInput === 'string') {
-            if (privateKeyInput.length >= 80 && privateKeyInput.length <= 100) {
-                try {
-                    const decoded = bs58.decode(privateKeyInput);
-                    if (decoded.length === 32) {
-                        privateKey = Buffer.from(decoded).toString('hex');
-                    }
-                } catch (e) { /* Not base58 */ }
-            }
-        }
-        
-        const wallet = api.deriveWallet(privateKey);
-        const amountDrops = Math.round(amountXRP * 1000000);
-        
-        const prepared = await api.prepareTransaction({
-            TransactionType: 'Payment',
-            Account: wallet.classicAddress,
-            Destination: toAddress,
-            Amount: amountDrops.toString()
-        });
-        
-        const signed = api.sign(prepared.txJSON, wallet.privateKey);
-        const result = await api.submit(signed.signedTransaction);
-        await api.disconnect();
-        
-        return result.result.tx_json.hash;
-    } catch (error) {
-        console.error('❌ XRP send error:', error.message);
-        throw error;
-    }
-}
-
-// ============================================================
-// 📌 SEND LTC (REAL) - ACCEPTS WIF AND OTHER FORMATS
-// ============================================================
-async function sendLTC(privateKeyInput, toAddress, amountLTC) {
-    try {
-        const wallet = getWalletForCoin('LTC');
-        const LITECOIN = {
-            messagePrefix: '\x19Litecoin Signed Message:\n',
-            bech32: 'ltc',
-            bip32: {
-                public: 0x019da462,
-                private: 0x019d9cfe
-            },
-            pubKeyHash: 0x30,
-            scriptHash: 0x32,
-            wif: 0xb0
-        };
-        
-        let privateKeyWIF = privateKeyInput;
-        if (privateKeyInput instanceof Uint8Array) {
-            privateKeyWIF = Buffer.from(privateKeyInput).toString('hex');
-        } else if (Buffer.isBuffer(privateKeyInput)) {
-            privateKeyWIF = privateKeyInput.toString('hex');
-        }
-        
-        const utxoResponse = await axios.get(`https://api.blockchair.com/litecoin/dashboards/address/${wallet.address}?transaction_details=true`);
-        const utxos = utxoResponse.data.data[wallet.address].utxo || [];
-        
-        const litoshisNeeded = Math.round(amountLTC * 100000000);
-        let selectedUTXOs = [];
-        let totalSats = 0;
-        
-        for (const utxo of utxos) {
-            if (totalSats < litoshisNeeded + 10000) {
-                selectedUTXOs.push(utxo);
-                totalSats += utxo.value;
-            }
-        }
-        
-        if (totalSats < litoshisNeeded + 10000) {
-            throw new Error('Insufficient UTXOs to cover amount + fee');
-        }
-        
-        const keyPair = ECPair.fromWIF(privateKeyWIF, LITECOIN);
-        const psbt = new bitcoin.Psbt({ network: LITECOIN });
-        
-        for (const utxo of selectedUTXOs) {
-            psbt.addInput({
-                hash: utxo.transaction_hash,
-                index: utxo.index,
-                witnessUtxo: {
-                    script: Buffer.from(utxo.script_hex, 'hex'),
-                    value: utxo.value
-                }
-            });
-        }
-        
-        psbt.addOutput({
-            address: toAddress,
-            value: litoshisNeeded
-        });
-        
-        const change = totalSats - litoshisNeeded - 10000;
-        if (change > 0) {
-            psbt.addOutput({
-                address: wallet.address,
-                value: change
-            });
-        }
-        
-        for (let i = 0; i < selectedUTXOs.length; i++) {
-            psbt.signInput(i, keyPair);
-        }
-        
-        psbt.finalizeAllInputs();
-        const tx = psbt.extractTransaction();
-        const txHex = tx.toHex();
-        
-        const broadcastResponse = await axios.post('https://litecoin.nownodes.io/api/v2/send_tx', { tx_hex: txHex });
-        return broadcastResponse.data.txid || broadcastResponse.data;
-    } catch (error) {
-        console.error('❌ LTC send error:', error.message);
         throw error;
     }
 }
@@ -1058,13 +963,25 @@ async function sendCryptoFromWallet(coinSymbol, toAddress, amount, network) {
             txId = await sendAVAX(wallet.privateKey, toAddress, amount);
             explorerUrl = `https://snowtrace.io/tx/${txId}`;
         }
-        else if (coinSymbol === 'XRP') {
-            txId = await sendXRP(wallet.privateKey, toAddress, amount);
-            explorerUrl = `https://xrpscan.com/tx/${txId}`;
+        else if (coinSymbol === 'MATIC') {
+            txId = await sendMATIC(wallet.privateKey, toAddress, amount);
+            explorerUrl = `https://polygonscan.com/tx/${txId}`;
         }
-        else if (coinSymbol === 'LTC') {
-            txId = await sendLTC(wallet.privateKey, toAddress, amount);
-            explorerUrl = `https://blockchair.com/litecoin/transaction/${txId}`;
+        else if (coinSymbol === 'ARB') {
+            txId = await sendARB(wallet.privateKey, toAddress, amount);
+            explorerUrl = `https://arbiscan.io/tx/${txId}`;
+        }
+        else if (coinSymbol === 'OP') {
+            txId = await sendOP(wallet.privateKey, toAddress, amount);
+            explorerUrl = `https://optimistic.etherscan.io/tx/${txId}`;
+        }
+        else if (coinSymbol === 'FTM') {
+            txId = await sendFTM(wallet.privateKey, toAddress, amount);
+            explorerUrl = `https://ftmscan.com/tx/${txId}`;
+        }
+        else if (coinSymbol === 'TRX') {
+            txId = await sendTRX(wallet.privateKey, toAddress, amount);
+            explorerUrl = `https://tronscan.org/#/transaction/${txId}`;
         }
         else if (coinSymbol === 'USDC' && network === 'SOL') {
             txId = await sendUSDCOnSolana(wallet.privateKey, toAddress, amount);
@@ -1079,11 +996,6 @@ async function sendCryptoFromWallet(coinSymbol, toAddress, amount, network) {
                 ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
                 : '0xdAC17F958D2ee523a2206206994597C13D831ec7';
             txId = await sendERC20(wallet.privateKey, toAddress, amount, contractAddress, 6);
-            explorerUrl = `https://etherscan.io/tx/${txId}`;
-        }
-        else if (coinSymbol === 'LINK') {
-            const contractAddress = '0x514910771AF9Ca656af840dff83E8264EcF986CA';
-            txId = await sendERC20(wallet.privateKey, toAddress, amount, contractAddress, 18);
             explorerUrl = `https://etherscan.io/tx/${txId}`;
         }
         else {
@@ -1168,6 +1080,14 @@ async function processSuccessfulOrder(order, paymentData) {
 app.post('/api/check-balance', async (req, res) => {
     try {
         const { coinSymbol, network, amount } = req.body;
+        // Block coming soon coins
+        const comingSoon = ['LTC', 'XRP', 'LINK'];
+        if (comingSoon.includes(coinSymbol)) {
+            return res.status(400).json({
+                success: false,
+                error: `${coinSymbol} is coming soon! Please choose another coin.`
+            });
+        }
         const balance = await getWalletBalance(coinSymbol, network);
         const hasBalance = balance >= amount;
         
@@ -1197,6 +1117,15 @@ app.post('/api/create-payment', async (req, res) => {
             amountUSD,
             nairaRate
         } = req.body;
+        
+        // Block coming soon coins
+        const comingSoon = ['LTC', 'XRP', 'LINK'];
+        if (comingSoon.includes(coinSymbol)) {
+            return res.status(400).json({
+                success: false,
+                error: `${coinSymbol} is coming soon! Please choose another coin.`
+            });
+        }
         
         const tx_ref = 'DP' + Date.now();
         const amountNGN = Math.round(amountUSD * nairaRate);
