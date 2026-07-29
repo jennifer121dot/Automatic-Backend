@@ -243,17 +243,58 @@ async function getWalletBalance(coinSymbol, network) {
             return 0;
         }
         
+        // ============================================================
+        // 🔥 BTC BALANCE CHECK - FIXED FOR REAL-TIME BALANCE
+        // ============================================================
         if (coinSymbol === 'BTC') {
             try {
-                const response = await axios.get(`https://mempool.space/api/address/${address}`);
+                // Try mempool.space first with cache-busting headers
+                console.log(`📡 Checking BTC balance via mempool.space for: ${address}`);
+                const response = await axios.get(`https://mempool.space/api/address/${address}`, {
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    },
+                    timeout: 10000
+                });
+                // funded_txo_sum = total of ALL UNSPENT outputs = CURRENT BALANCE
                 const balance = response.data.chain_stats.funded_txo_sum / 100000000;
-                console.log(`💰 BTC Balance: ${balance} BTC`);
+                console.log(`💰 BTC Balance (mempool.space): ${balance} BTC`);
                 return balance;
-            } catch {
-                const response = await axios.get(`https://blockchain.info/q/addressbalance/${address}`);
-                const balance = response.data / 100000000;
-                console.log(`💰 BTC Balance: ${balance} BTC`);
-                return balance;
+            } catch (error) {
+                console.log(`⚠️ Mempool.space failed (${error.message}), trying blockchain.info...`);
+                try {
+                    // blockchain.info with cache busting
+                    const response = await axios.get(`https://blockchain.info/q/addressbalance/${address}?_=${Date.now()}`, {
+                        headers: {
+                            'Cache-Control': 'no-cache',
+                            'Pragma': 'no-cache'
+                        },
+                        timeout: 10000
+                    });
+                    const balance = response.data / 100000000;
+                    console.log(`💰 BTC Balance (blockchain.info): ${balance} BTC`);
+                    return balance;
+                } catch (fallbackError) {
+                    console.log(`⚠️ Blockchain.info failed (${fallbackError.message}), trying blockchain.com...`);
+                    try {
+                        // blockchain.com as final fallback
+                        const response = await axios.get(`https://blockchain.com/btc/address/${address}?format=json`, {
+                            headers: {
+                                'Cache-Control': 'no-cache',
+                                'Pragma': 'no-cache'
+                            },
+                            timeout: 10000
+                        });
+                        // blockchain.com returns balance in satoshis
+                        const balance = response.data.final_balance / 100000000;
+                        console.log(`💰 BTC Balance (blockchain.com): ${balance} BTC`);
+                        return balance;
+                    } catch (finalError) {
+                        console.error(`❌ All BTC balance checks failed:`, finalError.message);
+                        return 0;
+                    }
+                }
             }
         }
         
